@@ -28,6 +28,16 @@ const figureExaggeration = ref(2)
 const showWind = ref(true)
 const showClouds = ref(true)
 const fullbright = ref(false)
+/** Requested frame-rate ceiling in fps; 0 renders every display refresh. The loop
+ *  can only ever go *slower* than the display: over Remote Desktop the session is
+ *  capped by Windows (30 fps by default), so this is a ceiling, not a target. */
+const maxFps = ref(0)
+/** Fraction of the native framebuffer size, 0.25–1. */
+const renderScale = ref(1)
+/** Refresh rate the browser is actually pacing by, measured by the render loop. */
+const displayHz = ref(0)
+/** GL_RENDERER of the drawing context, for the frame-rate readout. */
+const gpuName = ref('')
 /** chrome visibility: the planet is the point, so all of it can get out of the way */
 const sidebarOpen = ref(true)
 const panelsOpen = ref(true)
@@ -58,10 +68,12 @@ function persist() {
   saveTimer = setTimeout(() => {
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify({
-        v: 4,
+        v: 5,
         seed: seed.value,
         laws: { ...laws },
         mode: mode.value,
+        maxFps: maxFps.value,
+        renderScale: renderScale.value,
         exaggeration: exaggeration.value,
         figureExaggeration: figureExaggeration.value,
         speed: speed.value,
@@ -84,6 +96,8 @@ function restore() {
       seed?: number
       laws?: Laws
       mode?: FieldMode
+      maxFps?: number
+      renderScale?: number
       exaggeration?: number
       figureExaggeration?: number
       speed?: number
@@ -93,7 +107,7 @@ function restore() {
       sidebarOpen?: boolean
       panelsOpen?: boolean
     }
-    if (save.v !== 3 && save.v !== 4) return
+    if (save.v !== 3 && save.v !== 4 && save.v !== 5) return
     if (typeof save.seed === 'number') seed.value = save.seed
     if (save.laws) {
       const clean = clampLaws(save.laws)
@@ -103,6 +117,8 @@ function restore() {
       for (const d of LAW_DEFS) laws[d.key] = clean[d.key]!
     }
     if (save.mode) mode.value = save.mode
+    if (typeof save.maxFps === 'number') maxFps.value = Math.min(1000, Math.max(0, save.maxFps))
+    if (typeof save.renderScale === 'number') renderScale.value = Math.min(1, Math.max(0.25, save.renderScale))
     if (typeof save.exaggeration === 'number') exaggeration.value = save.exaggeration
     if (typeof save.figureExaggeration === 'number') figureExaggeration.value = save.figureExaggeration
     if (typeof save.speed === 'number') speed.value = save.speed
@@ -257,7 +273,8 @@ export function useSim() {
     if (w) resetHistory(w)
   }
 
-  watch([showWind, showClouds, fullbright, sidebarOpen, panelsOpen, mode, exaggeration, figureExaggeration], persist)
+  watch([showWind, showClouds, fullbright, sidebarOpen, panelsOpen, mode, exaggeration, figureExaggeration,
+    maxFps, renderScale], persist)
 
   const clock = computed(() => clockOf(tick.value, laws))
   const historyReach = computed(() => {
@@ -270,6 +287,7 @@ export function useSim() {
 
   return {
     laws, world, seed, tick, paused, speed, mode, exaggeration, figureExaggeration, showWind, showClouds, fullbright,
+    maxFps, renderScale, displayHz, gpuName,
     sidebarOpen, panelsOpen,
     selectedCell, reading, figure, unstable, regenerating, fps, tps, meanTemp, maxWind,
     terrainVersion, seekTarget, seekProgress, fastSeek, rewindLimit, notice, clock, historyReach,

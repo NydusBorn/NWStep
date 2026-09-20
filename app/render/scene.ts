@@ -15,8 +15,10 @@ const MODE_ID: Record<FieldMode, number> = {
 }
 
 const STAR_DISTANCE = 70
-/** how often to refill the per-cell figure offsets used by the probe, in frames */
-const FIGURE_READOUT_INTERVAL = 15
+/** How often to refill the per-cell figure offsets used by the probe. Milliseconds,
+ *  not frames: counting frames made the probe refresh at 4 Hz on a 60 Hz panel but
+ *  only 2 Hz in a 32 Hz Remote Desktop session, for no reason the reader could see. */
+const FIGURE_READOUT_MS = 250
 
 const planetVert = /* glsl */`
 attribute float aValue;
@@ -156,8 +158,16 @@ export class PlanetScene {
   private markerLocal = new THREE.Matrix4()
 
   private fieldScratch: Float32Array | null = null
-  private frame = 0
+  /** Starts due, so the first render fills the offsets before anything reads them. */
+  private figureAcc = FIGURE_READOUT_MS
   private maxRadius = 1
+
+  /** Fraction of the native framebuffer. An RDP session is usually fill-rate bound
+   *  (frequently on a software GL driver), so drawing fewer pixels is the setting
+   *  that actually buys frames there, where a frame-rate ceiling cannot. */
+  renderScale = 1
+  private cssWidth = 1
+  private cssHeight = 1
 
   mode: FieldMode = 'elevation'
   exaggeration = 5
@@ -172,7 +182,7 @@ export class PlanetScene {
     this.rand = rand
 
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: false })
-    this.renderer.setPixelRatio(Math.min(2, window.devicePixelRatio))
+    this.applyPixelRatio()
     this.scene.background = new THREE.Color(0x05060a)
 
     this.camera = new THREE.PerspectiveCamera(42, 1, 0.01, 4000)
@@ -491,17 +501,44 @@ export class PlanetScene {
   }
 
   resize(w: number, h: number): void {
+    this.cssWidth = w
+    this.cssHeight = h
     this.camera.aspect = w / h
     this.camera.updateProjectionMatrix()
     this.renderer.setSize(w, h, false)
     this.wind.setResolution(w, h)
   }
 
+  /** Resize the framebuffer without touching the CSS box, so the picture stays the
+   *  same size on screen while costing more or fewer pixels per frame. */
+  setRenderScale(scale: number): void {
+    const next = Number.isFinite(scale) ? Math.min(1, Math.max(0.25, scale)) : 1
+    if (next === this.renderScale) return
+    this.renderScale = next
+    this.applyPixelRatio()
+    // setPixelRatio only takes effect on the next setSize, so re-apply the current box.
+    this.resize(this.cssWidth, this.cssHeight)
+  }
+
+  private applyPixelRatio(): void {
+    this.renderer.setPixelRatio(Math.min(2, window.devicePixelRatio) * this.renderScale)
+  }
+
   get windStreamCount(): number {
     return this.wind.activeStreams
   }
 
-  render(dtFrames: number, animateWeather = true): void {
+  /**
+   * @param dtMs wall-clock milliseconds since the previous rendered frame.
+   */
+  render(dtMs: number, animateWeather = true): void {
+    // The one place wall-clock time becomes animation units. Clamped so a stall does
+    // not teleport the weather and a very fast display does not inch it forward; the
+    // layers below step by this, so they run at the same pace on any display. The
+    // finite check is not paranoia: the layers decay state by dtFrames, and NaN there
+    // is sticky (`Math.max(0, NaN)` is NaN), so one bad frame would black out the
+    // clouds until the scene is rebuilt rather than until the next good frame.
+    const dtFrames = Number.isFinite(dtMs) ? Math.min(3, Math.max(0.2, dtMs / 16.667)) : 1
     const [sx, sy, sz] = sunDirection(this.world.tick, this.world.laws)
     this.planetMat.uniforms.uSunDir!.value.set(sx, sy, sz)
     this.atmoMat.uniforms.uSunDir!.value.set(sx, sy, sz)
@@ -510,8 +547,11 @@ export class PlanetScene {
 
     // Apply the slowly evolved solid figure without rebuilding terrain geometry.
     this.applyFigure()
-    if (this.frame % FIGURE_READOUT_INTERVAL === 0) refreshFigureOffsets(this.world)
-    this.frame++
+    this.figureAcc += dtMs
+    if (this.figureAcc >= FIGURE_READOUT_MS) {
+      this.figureAcc = 0
+      refreshFigureOffsets(this.world)
+    }
 
     const fb = this.fullbright ? 1 : 0
     this.planetMat.uniforms.uFullbright!.value = fb
