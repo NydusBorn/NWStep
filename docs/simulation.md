@@ -72,3 +72,17 @@ Paused-wind regression: `node scripts/verify-wind.mjs http://localhost:3123/`
 requires the development server. It checks wheel zoom without advancing time,
 the global readouts, recovery after a solver stop, and rewind recovery at day 0.
 Screenshots are written to `.shots/paused-wind-*.png`.
+
+## System size and orbital controls
+
+The `System` group accepts sliders or exact numeric values (commit a typed value by leaving the field):
+
+- Planet radius: 2,000–12,000 km. At fixed density, mass scales with R³ and surface gravity with R. Terrain, tidal offsets and wind-speed conversion use this radius. The camera keeps its physical distance while editing the radius, subject to its zoom limits.
+- Distance to star: 0.5–3 times the original orbit. Received flux is the configured Stellar flux divided by distance squared. The prescribed circular stellar orbit has a period proportional to distance^(3/2), independent of planetary spin; its baseline is the original ten-day year. The displayed star distance is illustrative, not an AU scale or a full star–planet N-body integration.
+- Inner/outer moon launch radii: measured from the planet centre in Rₚ (planet radii). Inclinations range from 0° through polar at 90° to retrograde at 180°. Editing any orbital control relaunches both moons and clears rewind history. Their circular launch velocities, tidal forcing and the tidal-lock shortcut use the selected radii. Close or crossing orbits are intentionally allowed and may be unstable.
+
+Moon mass/radius ratios remain the existing defaults. With fixed density and moon radius measured in Rₚ, changing planet radius preserves the dimensionless orbital period; changing density affects orbital gravity. The existing orbital time calibration is retained for compatibility with the default system.
+
+The readout shows planet mass, received flux, year length and current moon distances in kilometres. New parameters participate in settings/timestep export and local persistence. Older files receive the original defaults for absent parameters.
+
+Run `node scripts/verify-system.mjs http://localhost:3123/` against the development server to check edits, relaunches, export/import, persistence and input bounds.

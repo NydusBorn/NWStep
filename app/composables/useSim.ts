@@ -1,8 +1,8 @@
 import { computed, reactive, ref, shallowRef, watch } from 'vue'
 import { seedColonies } from '../sim/life'
-import { clampLaws, defaultLaws, LAW_DEFS, TERRAIN_LAWS, type Laws } from '../sim/laws'
+import { clampLaws, defaultLaws, LAW_DEFS, TERRAIN_LAWS, ORBIT_LAWS, type Laws } from '../sim/laws'
 import {
-  createWorld, regenerateTerrain, resetOrbits, resetHistory, readCell, readFigure,
+  createWorld, regenerateTerrain, resetOrbits, resetHistory, readCell, readFigure, refreshFigure,
   type World, type CellReading, type FigureReading
 } from '../sim/world'
 import { historySpan } from '../sim/history'
@@ -175,7 +175,14 @@ export function useSim() {
       if (!w) return
       const next = clampLaws({ ...laws })
       const rebuild = [...TERRAIN_LAWS].some(k => next[k] !== w.laws[k])
+      const relaunch = [...ORBIT_LAWS].some(k => next[k] !== w.laws[k])
       w.laws = next
+      if (relaunch) {
+        resetOrbits(w)
+        notice.value = 'Moon orbits updated: both moons relaunched; rewind history restarted.'
+      }
+      refreshFigure(w)
+      refreshReading()
       w.air.unstable = null
       w.paused = false
       seekTarget.value = null

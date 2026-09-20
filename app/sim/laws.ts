@@ -26,10 +26,12 @@ export interface LawDef {
   unit?: string
   /** Changing this law invalidates the terrain and requires regeneration. */
   rebuildsTerrain?: boolean
+  relaunchesOrbits?: boolean
 }
 
 export type LawGroup
-  = | 'Gravitation'
+  = | 'System'
+    | 'Gravitation'
     | 'Rotation'
     | 'Thermodynamics'
     | 'Fluid'
@@ -39,7 +41,7 @@ export type LawGroup
     | 'Geology'
 
 export const LAW_GROUPS: LawGroup[] = [
-  'Gravitation', 'Rotation', 'Thermodynamics', 'Fluid', 'Clouds', 'Electrics', 'Life', 'Geology'
+  'System', 'Gravitation', 'Rotation', 'Thermodynamics', 'Fluid', 'Clouds', 'Electrics', 'Life', 'Geology'
 ]
 
 export const LAW_DEFS: LawDef[] = [
@@ -77,6 +79,42 @@ export const LAW_DEFS: LawDef[] = [
   ] as const).map(([key, label, value, min, max, step, formula, hint]) => ({
     key, label, value, min, max, step, formula, hint, group: 'Life' as const
   })),
+  {
+    key: 'planetRadiusKm', group: 'System', label: 'Planet radius',
+    value: 6000, min: 2000, max: 12000, step: 100, unit: 'km', rebuildsTerrain: true,
+    formula: 'M = 4πρR³/3, g = GM/R²',
+    hint: 'Physical radius at the configured density. Updates mass, gravity, relief, tidal displacement and wind-speed units. Moon orbits are measured in planet radii.'
+  },
+  {
+    key: 'starDistance', group: 'System', label: 'Distance to star',
+    value: 1, min: 0.5, max: 3, step: 0.05, unit: '× initial',
+    formula: 'S = S₀/d², T_year ∝ d^(3/2)',
+    hint: 'Move the planet closer to or farther from its star. Twice the distance gives one quarter of the stellar flux and a longer year. The star also appears smaller. This is a circular orbit, not a full star–planet gravity solver.'
+  },
+  {
+    key: 'innerOrbitRadius', group: 'System', label: 'Inner moon orbit radius',
+    value: 4, min: 2, max: 25, step: 0.1, unit: 'Rₚ', relaunchesOrbits: true,
+    formula: 'v² = GM/r^(p−1), ζ ∝ r^(−p−1)',
+    hint: 'Distance from the planet centre, in planet radii. Editing an orbit relaunches both moons on circular orbits and clears rewind history. Closer moons cause stronger tides; nearby or crossing orbits can be unstable.'
+  },
+  {
+    key: 'outerOrbitRadius', group: 'System', label: 'Outer moon orbit radius',
+    value: 20, min: 3, max: 45, step: 0.1, unit: 'Rₚ', relaunchesOrbits: true,
+    formula: 'T = 2π√(r^(p+1)/GM)',
+    hint: 'Launch radius of the outer moon, measured from the planet centre. Changes relaunch both moons. Check Hill separation in the readouts when bringing the orbits closer together.'
+  },
+  {
+    key: 'innerOrbitInclination', group: 'System', label: 'Inner moon inclination',
+    value: 0, min: 0, max: 180, step: 1, unit: '°', relaunchesOrbits: true,
+    formula: 'v_y = v·sin i, v_z = v·cos i',
+    hint: 'Orbit tilt relative to the equator. 0° is prograde equatorial, 90° polar and 180° retrograde. Relaunches both moons.'
+  },
+  {
+    key: 'outerOrbitInclination', group: 'System', label: 'Outer moon inclination',
+    value: 1.25 * 180 / Math.PI, min: 0, max: 180, step: 1, unit: '°', relaunchesOrbits: true,
+    formula: 'v_y = v·sin i, v_z = v·cos i',
+    hint: 'Tilt of the outer orbit. Inclined moons can exchange orbital energy. Relaunches both moons.'
+  },
   {
     key: 'verticalExchange', group: 'Fluid', label: 'Vertical exchange',
     value: 1, min: 0, max: 3, step: 0.05,
@@ -173,8 +211,8 @@ export const LAW_DEFS: LawDef[] = [
   {
     key: 'solarConstant', group: 'Thermodynamics', label: 'Stellar flux',
     value: 1100, min: 0, max: 3000, step: 10, unit: 'W/m²',
-    formula: 'E_in = S·max(0, n̂·ŝ)·(1−A)',
-    hint: 'Energy arriving at the substellar point.'
+    formula: 'E_in = (S₀/d²)·max(0, n̂·ŝ)·(1−A)',
+    hint: 'Stellar flux at the initial star distance. Actual heating also follows the Distance to star control in System.'
   },
   {
     key: 'emissionExponent', group: 'Thermodynamics', label: 'Radiative cooling exponent  n',
@@ -564,3 +602,4 @@ export function lawsByGroup(): Record<LawGroup, LawDef[]> {
 
 /** Laws whose change forces the terrain to be regenerated. */
 export const TERRAIN_LAWS = new Set(LAW_DEFS.filter(d => d.rebuildsTerrain).map(d => d.key))
+export const ORBIT_LAWS = new Set(LAW_DEFS.filter(d => d.relaunchesOrbits).map(d => d.key))

@@ -8,7 +8,7 @@ import { stepUpperAir } from './upperAir'
 import { clampLaws, defaultLaws, type Laws } from './laws'
 import { computeFigure, equilibriumStrain, relaxStrain, strainOffsetKm, type Figure } from './shape'
 import { createHistory, record, findFrame, restore, clearHistory, type History } from './history'
-import { beaufort, clockOf, orbitalPeriod, surfaceGravity, toMetresPerSecond, PLANET_RADIUS_KM, type Clock } from './units'
+import { beaufort, clockOf, orbitalPeriod, surfaceGravity, toMetresPerSecond, planetRadiusKm, orbitalGravity, type Clock } from './units'
 
 export { toMetresPerSecond } from './units'
 
@@ -159,14 +159,14 @@ export function initialBodies(laws: Laws): Body[] {
     }
   }
   return [
-    mk(INNER_MOON_NAME, INNER_MOON_RADIUS, 0, 0.08, 0.30, 0xc8b8a0),
-    mk('Странник', 20.0, 1.25, 0.008, 0.16, 0x8fa6c0)
+    mk(INNER_MOON_NAME, laws.innerOrbitRadius!, laws.innerOrbitInclination! * Math.PI / 180, 0.08, 0.30, 0xc8b8a0),
+    mk('Странник', laws.outerOrbitRadius!, laws.outerOrbitInclination! * Math.PI / 180, 0.008, 0.16, 0x8fa6c0)
   ]
 }
 
 function circularSpeed(r: number, laws: Laws): number {
   // for F = G·M/r^p the circular condition is v² / r = G·M / r^p
-  return Math.sqrt((laws.G! * PLANET_MASS) / r ** (laws.gravityExponent! - 1))
+  return Math.sqrt((orbitalGravity(laws) * PLANET_MASS) / r ** (laws.gravityExponent! - 1))
 }
 
 /** scratch acceleration buffers, reused so the hot path allocates nothing */
@@ -184,7 +184,7 @@ let accB: Float64Array | null = null
  * sweeping around the planet again.
  */
 function accelerations(bodies: Body[], laws: Laws, out: Float64Array): void {
-  const G = laws.G!
+  const G = orbitalGravity(laws)
   const p = laws.gravityExponent!
   out.fill(0)
   for (let i = 0; i < bodies.length; i++) {
@@ -232,8 +232,8 @@ function stepBodies(bodies: Body[], laws: Laws, dt: number): void {
     for (let k = 0; k < 3; k++) b.vel[k] = b.vel[k]! + (0.5 * (a0[i * 3 + k]! + a1[i * 3 + k]!) * dt)
 
     if (!Number.isFinite(b.pos[0]) || !Number.isFinite(b.pos[1]) || !Number.isFinite(b.pos[2])) {
-      b.pos = [INNER_MOON_RADIUS, 0, 0]
-      b.vel = [0, 0, circularSpeed(INNER_MOON_RADIUS, laws)]
+      b.pos = [laws.innerOrbitRadius!, 0, 0]
+      b.vel = [0, 0, circularSpeed(laws.innerOrbitRadius!, laws)]
       b.trail.length = 0
     }
   }
@@ -283,7 +283,7 @@ export function refreshFigure(world: World): void {
 export function refreshFigureOffsets(world: World): void {
   const { pos, count } = world.sphere.grid
   for (let i = 0; i < count; i++) {
-    world.figureOffset[i] = strainOffsetKm(world.strain, pos[i * 3]!, pos[i * 3 + 1]!, pos[i * 3 + 2]!)
+    world.figureOffset[i] = strainOffsetKm(world.strain, pos[i * 3]!, pos[i * 3 + 1]!, pos[i * 3 + 2]!, planetRadiusKm(world.laws))
   }
 }
 
@@ -303,7 +303,7 @@ export function resetOrbits(world: World): void {
 
 /** Rotation period that puts the planet in mutual tidal lock with the inner moon. */
 export function tidalLockPeriod(laws: Laws): number {
-  return orbitalPeriod(INNER_MOON_RADIUS, laws)
+  return orbitalPeriod(laws.innerOrbitRadius ?? INNER_MOON_RADIUS, laws)
 }
 
 /**
@@ -374,7 +374,7 @@ export function readCell(world: World, i: number): CellReading {
     grid.pos[i * 3]! * sx + grid.pos[i * 3 + 1]! * sy + grid.pos[i * 3 + 2]! * sz)
   let bearing = (Math.atan2(u, v) * 180) / Math.PI
   if (bearing < 0) bearing += 360
-  const speed = toMetresPerSecond(Math.hypot(u, v))
+  const speed = toMetresPerSecond(Math.hypot(u, v), laws)
   return {
     cell: i,
     lat: (grid.lat[i]! * 180) / Math.PI,
@@ -416,8 +416,8 @@ export interface FigureReading {
 export function readFigure(world: World): FigureReading {
   const f = world.figure
   const s = world.strain
-  const equatorial = PLANET_RADIUS_KM * (1 + (s[0]! + s[2]!) * 0.5)
-  const polar = PLANET_RADIUS_KM * (1 + s[1]!)
+  const equatorial = planetRadiusKm(world.laws) * (1 + (s[0]! + s[2]!) * 0.5)
+  const polar = planetRadiusKm(world.laws) * (1 + s[1]!)
   const flattening = (equatorial - polar) / equatorial
   return {
     hill: hillSeparation(world.bodies),

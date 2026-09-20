@@ -9,7 +9,7 @@ import { useSim } from '../composables/useSim'
 import FpsControl from './FpsControl.vue'
 
 const {
-  world, tick, paused, speed, mode, exaggeration, figureExaggeration, showWind, showClouds, fullbright,
+  world, laws, tick, paused, speed, mode, exaggeration, figureExaggeration, showWind, showClouds, fullbright,
   maxFps, renderScale, displayHz, gpuName,
   selectedCell, unstable, fps, tps, meanTemp, maxWind, terrainVersion,
   seekTarget, seekProgress, fastSeek, rewindLimit, notice,
@@ -253,7 +253,7 @@ function loop(now: number) {
       refreshReading()
       if (selectedCell.value !== null) scene.setMarker(selectedCell.value)
       meanTemp.value = w.air.meanTemp
-      maxWind.value = toMetresPerSecond(w.air.maxSpeed)
+      maxWind.value = toMetresPerSecond(w.air.maxSpeed, w.laws)
       windStreams.value = scene.windStreamCount
     }
     const drawStart = performance.now()
@@ -326,6 +326,13 @@ onBeforeUnmount(() => {
 })
 
 watch(world, () => buildScene())
+watch(() => laws.planetRadiusKm, (radius, previous) => {
+  if (!scene || !radius || !previous) return
+  // Keep the camera's physical distance when the reference planet radius changes.
+  scene.camera.position.multiplyScalar(previous / radius)
+  scene.controls.target.multiplyScalar(previous / radius)
+  scene.controls.update()
+})
 watch(terrainVersion, () => {
   scene?.rebuildTerrainGeometry()
   scene?.refreshField()
