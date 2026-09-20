@@ -510,6 +510,19 @@ export class PlanetScene {
     return best
   }
 
+  focusColony(id: number): void {
+    const colony = this.world.life.colonies.find(c => c.id === id)
+    if (!colony) return
+    this.scene.updateMatrixWorld(true)
+    const centre = new THREE.Vector3().applyMatrix4(this.figureGroup.matrixWorld)
+    const direction = new THREE.Vector3(...colony.position).transformDirection(this.figureGroup.matrixWorld)
+    const distance = Math.max(this.camera.position.distanceTo(this.controls.target), this.maxRadius * 1.5)
+    this.controls.target.copy(centre)
+    this.camera.position.copy(centre).addScaledVector(direction, distance)
+    this.camera.lookAt(centre)
+    this.controls.update()
+  }
+
   pick(ndcX: number, ndcY: number): number | null {
     const ray = new THREE.Raycaster()
     ray.setFromCamera(new THREE.Vector2(ndcX, ndcY), this.camera)

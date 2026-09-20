@@ -32,7 +32,7 @@ for (let t = 0; t < duration; t++) {
     console.log(JSON.stringify({ scenario, day: +(w.tick / w.laws.rotationPeriod).toFixed(1), colonies: w.life.colonies.length,
       population: w.life.colonies.reduce((sum, c) => sum + c.positive + c.negative, 0),
       births: w.life.births, deaths: w.life.deaths, starved: w.life.starved, crowded: w.life.crowded,
-      merges: w.life.merges, foodCost: +(food / Math.max(costs, 1e-12)).toFixed(3),
+      merges: w.life.merges, dispersals: w.life.dispersals, foodCost: +(food / Math.max(costs, 1e-12)).toFixed(3),
       generation: Math.max(0, ...w.life.colonies.map(c => c.generation)),
       efficiency: w.life.colonies.length ? w.life.colonies.reduce((s, c) => s + c.traits.efficiency, 0) / w.life.colonies.length : 0 }))
     food = 0

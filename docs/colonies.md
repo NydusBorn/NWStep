@@ -39,9 +39,20 @@ the existing simulation charge units, not joules.
    outside suitable habitat; depleted colonies lose creatures and eventually die.
 5. Local capacity depends on cloud/dust density. Colonies sharing a cell and its
    neighbours compete for space. Excess density kills creatures independently of
-   starvation. Capacity has a 25% floor so a small travelling colony can use its
+   starvation. Capacity has a 50% floor so a small travelling colony can use its
    reserve in clear air before starving. There is also a disclosed computational
    ceiling on colony count.
+   An isolated colony (no other colony within chord distance 0.25) first collects
+   excess creatures for four ticks. They remain part of its population and consume
+   maintenance. Sustained crowding then transfers them, their exact charge counts
+   and proportional energy to a daughter colony. A random tangent impulse lasts
+   eight ticks at 0.025 radians/tick, added to wind. Launch dissipates 5% of the
+   transferred energy. Collection and active launch provide brief crowding grace;
+   starvation still applies. Nearby colonies, the colony ceiling or lost crowding
+   cancel collection. Normal density mortality still regulates non-isolated groups.
+   Dispersal preserves inherited traits and generation, starts the daughter's
+   reproductive cooldown, and has a separate counter from births. It cannot
+   accelerate mutation. Collection and impulses rewind with the population.
 6. Position follows the lower wind on the sphere. Local food-seeking and social
    preferences blend into a bounded steering request. Steering is at most a small
    fraction of wind speed: sustained travel against strong wind is impossible.
@@ -118,19 +129,28 @@ mutation; wind dominance; funded reproduction; deterministic rewind; exact life
 seeks; browser rendering and pause behaviour. Run tests, typecheck and lint.
 
 `node scripts/verify-life.mjs 300 baseline 20260919` runs 300 planet days with
-exact weather and ecology. Defaults use maintenance 0.000003, reserve 48 ticks,
+exact weather and ecology. Defaults use maintenance 0.000003, reserve 72 ticks,
 harvest multiplier 8, growth 0.008 and incompatible contact loss 0.02. These
 budgets match the weather's charge supply without increasing weather charging.
-Two fresh 300-day runs (seeds 20260919 and 20260920) ended with respectively
+Before dispersal and the additional travelling reserve, two fresh 300-day runs
+(seeds 20260919 and 20260920) ended with respectively
 3 colonies / 494 creatures and 2 colonies / 208 creatures, both at maximum
 generation 9. Most founders died early. These are survival checks, not a promise
 of survival for every seed or improvement in every inherited trait.
+With dispersal, 72-tick reserves and the 50% travelling-capacity floor, fresh
+100-day runs of those seeds ended with 10 colonies / 749 creatures and
+2 colonies / 179 creatures. The second run recorded 37 dispersals; mortality
+remained possible, including among dispersed groups.
 
 To try it: resume a new world, wait through the founder warmup, and open the
 Electrical life readout. Select a colony from the census to inspect its traits.
 Life → Parameters opens the life editor in the left sidebar. Reset life defaults
 affects only biological laws. Restart from day 0 restarts the current seed with
 the current laws and pauses it. Hiding colonies changes only their display.
+Move to next colony cycles through living colonies, selects its inspector and
+rotates the camera to its current position. It also works with one survivor and
+is hidden when none exist. Creature death counters are cumulative since restart;
+they are not colony deaths or the current number of crowded creatures.
 The bottom Show/Hide view controls button collapses the entire layer toolbar and
 wind legend without changing any layer visibility settings. This preference is
 remembered between sessions; readouts gain more height while it is collapsed.

@@ -13,7 +13,7 @@ const {
   maxFps, renderScale, displayHz, gpuName,
   selectedCell, unstable, fps, tps, meanTemp, maxWind, terrainVersion,
   seekTarget, seekProgress, fastSeek, rewindLimit, notice,
-  select, refreshReading, showLife, showCreatures, selectedColony, readoutView, panelsOpen
+  select, refreshReading, showLife, showCreatures, selectedColony, readoutView, panelsOpen, colonyFocusRequest
 } = useSim()
 
 const host = ref<HTMLDivElement | null>(null)
@@ -361,6 +361,9 @@ watch(showLife, (v) => {
 })
 watch(selectedColony, (v) => {
   if (scene) scene.selectedColony = v
+})
+watch(colonyFocusRequest, () => {
+  if (selectedColony.value !== null) scene?.focusColony(selectedColony.value)
 })
 watch(showCreatures, (v) => {
   if (scene) scene.showCreatures = v

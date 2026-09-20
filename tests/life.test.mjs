@@ -104,6 +104,8 @@ test('overdensity kills fed creatures while adult traits remain fixed', () => {
   c.positive = 1000
   c.negative = 1000
   c.energy = reserve(w, c)
+  // Nearby colonies prevent isolated dispersal; mortality still regulates clusters.
+  w.life.colonies.push({ ...structuredClone(c), id: 999, phase: c.phase + Math.PI })
   const traits = structuredClone(c.traits)
   w.tick = 1
   prepareLife(w)
@@ -317,4 +319,66 @@ test('automatic batch waits for enough separated sites without consuming its RNG
   assert.deepEqual(w.life, before)
   w.laws.lifeSeparation = 0.18
   assert.equal(seedColonies(w), w.laws.lifeFounders)
+})
+
+test('an isolated crowded colony collects then launches living creatures without genetic evolution', () => {
+  const w = habitatWorld(), parent = w.life.colonies[0]
+  w.life.colonies = [parent]
+  w.laws.lifeGrowth = 0
+  parent.positive = 160
+  parent.negative = 140
+  parent.energy = reserve(w, parent)
+  const before = structuredClone(parent)
+  for (let t = 1; t <= w.laws.lifeGatherTicks; t++) {
+    w.tick = t
+    finishLife(w)
+    assert.equal(w.life.colonies.length, 1)
+    assert.equal(w.life.crowded, 0)
+  }
+  assert.ok(parent.crowdedGathering > 0)
+  w.tick++
+  finishLife(w)
+  const child = w.life.colonies[1]
+  assert.equal(w.life.dispersals, 1)
+  assert.equal(child.origin, 'dispersal')
+  assert.equal(child.generation, parent.generation)
+  assert.deepEqual(child.traits, parent.traits)
+  assert.equal(w.life.births, 0)
+  assert.equal(parent.positive + child.positive, before.positive)
+  assert.equal(parent.negative + child.negative, before.negative)
+  const transferred = before.energy * population(child) / population(before)
+  assert.ok(Math.abs(parent.energy + child.energy - (before.energy - transferred * w.laws.lifeLaunchCost)) < 1e-12)
+  resetHistory(w)
+  const state = structuredClone(w.life)
+  const initial = [...child.position]
+  for (let t = 0; t < w.laws.lifeLaunchTicks; t++) prepareLife(w)
+  assert.equal(child.impulse, undefined)
+  assert.ok(Math.hypot(...child.position.map((v, k) => v - initial[k])) > 0.1)
+  assert.ok(Math.abs(Math.hypot(...child.position) - 1) < 1e-12)
+  restore(w, findFrame(w.history, w.tick))
+  assert.deepEqual(w.life, state, 'rewind preserves collection and active impulse')
+})
+
+test('nearby colonies and the colony ceiling block dispersal; collection cancels', () => {
+  const w = habitatWorld(), c = w.life.colonies[0]
+  w.life.colonies = [c]
+  w.laws.lifeGrowth = 0
+  c.positive = 160
+  c.negative = 140
+  c.energy = reserve(w, c)
+  w.tick = 1
+  finishLife(w)
+  assert.ok(c.crowdedGathering > 0)
+  w.life.colonies.push({ ...structuredClone(c), id: 999, phase: c.phase + Math.PI })
+  w.tick++
+  finishLife(w)
+  assert.equal(c.crowdedGathering, 0)
+  assert.equal(c.gatheringSince, undefined)
+  assert.ok(w.life.crowded > 0)
+  assert.equal(w.life.dispersals, 0)
+  w.life.colonies = [c]
+  w.laws.lifeMaxColonies = 1
+  finishLife(w)
+  assert.equal(c.crowdedGathering, 0)
+  assert.equal(w.life.dispersals, 0)
 })

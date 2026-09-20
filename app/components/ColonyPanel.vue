@@ -3,7 +3,7 @@ import { computed, ref } from 'vue'
 import { useSim } from '../composables/useSim'
 import { population, reserve } from '../sim/life'
 
-const { world, tick, lifeVersion, selectedColony, readoutView, select, laws, introduceColonies, seekTarget, regenerating, openLifeSettings, restartWorld, paused } = useSim()
+const { world, tick, lifeVersion, selectedColony, readoutView, select, laws, introduceColonies, seekTarget, regenerating, openLifeSettings, restartWorld, paused, nextColony } = useSim()
 const batchCount = ref(laws.lifeFounders ?? 24)
 const introductionMessage = ref('')
 function introduce() {
@@ -29,7 +29,7 @@ const census = computed(() => {
     population: colonies.reduce((sum, c) => sum + population(c), 0),
     positive: colonies.reduce((sum, c) => sum + c.positive, 0),
     negative: colonies.reduce((sum, c) => sum + c.negative, 0),
-    births: w.life.births, lightningBirths: w.life.lightningBirths, deaths: w.life.deaths, merges: w.life.merges, crowded: w.life.crowded, starved: w.life.starved,
+    births: w.life.births, lightningBirths: w.life.lightningBirths, deaths: w.life.deaths, merges: w.life.merges, dispersals: w.life.dispersals, crowded: w.life.crowded, starved: w.life.starved,
     colonies: colonies.map(c => ({ id: c.id, count: population(c), generation: c.generation, cell: c.cell })),
     chosen: chosen ? { ...chosen, traits: { ...chosen.traits }, reserve: reserve(w, chosen) } : null,
     events: w.life.events.slice(-3).reverse()
@@ -90,6 +90,13 @@ function choose(id: number) {
     <p class="my-2 font-mono text-emerald-300">
       {{ census.count }} colonies · {{ census.population }} creatures
     </p>
+    <button
+      v-if="census.count"
+      class="mb-2 text-emerald-300"
+      @click="nextColony"
+    >
+      Move to next colony
+    </button>
     <form
       class="my-3 space-y-2 border-y border-white/10 py-3"
       @submit.prevent="introduce"
@@ -135,10 +142,13 @@ function choose(id: number) {
       Colony births {{ census.births }} · deaths {{ census.deaths }} · merges {{ census.merges }}
     </p>
     <p class="text-white/50">
+      Crowding dispersals {{ census.dispersals }}
+    </p>
+    <p class="text-white/50">
       Spontaneous lightning births {{ census.lightningBirths }}
     </p>
     <p class="text-white/50">
-      Creature deaths: crowding {{ census.crowded }} · starvation {{ census.starved }}
+      Total creature deaths: crowding {{ census.crowded }} · starvation {{ census.starved }}
     </p>
     <div
       class="mt-2 max-h-28 overflow-y-auto"
@@ -172,7 +182,7 @@ function choose(id: number) {
         Merged from: {{ census.chosen.mergedFrom.join(' + ') }}
       </p>
       <p v-else>
-        Origin: {{ census.chosen.origin === 'lightning' ? 'natural lightning' : census.chosen.parents.join(' + ') || 'artificial founder' }}
+        Origin: {{ census.chosen.origin === 'lightning' ? 'natural lightning' : census.chosen.origin === 'dispersal' ? `dispersed from ${census.chosen.parents.join(' + ')}` : census.chosen.parents.join(' + ') || 'artificial founder' }}
       </p>
       <p>Age {{ ((tick - census.chosen.born) / laws.rotationPeriod!).toFixed(1) }} days · +{{ census.chosen.positive }} / −{{ census.chosen.negative }}</p>
       <p>Energy {{ census.chosen.energy.toExponential(2) }} / {{ census.chosen.reserve.toExponential(2) }}</p>

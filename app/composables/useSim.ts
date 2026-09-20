@@ -35,6 +35,7 @@ const viewControlsOpen = ref(true)
 const lifeVersion = ref(0)
 const lawView = ref<'all' | 'life'>('all')
 const selectedColony = ref<number | null>(null)
+const colonyFocusRequest = ref(0)
 const fullbright = ref(false)
 /** Requested frame-rate ceiling in fps; 0 renders every display refresh. The loop
  *  can only ever go *slower* than the display: over Remote Desktop the session is
@@ -76,7 +77,7 @@ function persist() {
   saveTimer = setTimeout(() => {
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify({
-        v: 6,
+        v: 7,
         seed: seed.value,
         laws: { ...laws },
         mode: mode.value,
@@ -121,10 +122,11 @@ function restore() {
       readoutView?: 'planet' | 'life'
       viewControlsOpen?: boolean
     }
-    if (save.v !== 3 && save.v !== 4 && save.v !== 5 && save.v !== 6) return
+    if (save.v !== 3 && save.v !== 4 && save.v !== 5 && save.v !== 6 && save.v !== 7) return
     if (typeof save.seed === 'number') seed.value = save.seed
     if (save.laws) {
       const clean = clampLaws(save.laws)
+      if (save.v < 7 && save.laws.lifeReserveTicks === 48) clean.lifeReserveTicks = 72
       if (save.v < 6) {
         const previousDefaults: Record<string, number> = {
           lifeMaintenance: 0.00012, lifeReserveTicks: 16, lifeHarvest: 6,
@@ -310,6 +312,17 @@ export function useSim() {
     sidebarOpen.value = true
   }
 
+  function nextColony() {
+    const colonies = world.value?.life.colonies
+    if (!colonies?.length) return
+    const index = colonies.findIndex(c => c.id === selectedColony.value)
+    selectedColony.value = colonies[(index + 1) % colonies.length]!.id
+    readoutView.value = 'life'
+    panelsOpen.value = true
+    select(null)
+    colonyFocusRequest.value++
+  }
+
   function resetLifeLaws() {
     const defaults = defaultLaws()
     for (const d of LAW_DEFS) if (d.group === 'Life') laws[d.key] = defaults[d.key]!
@@ -354,7 +367,7 @@ export function useSim() {
 
   return {
     showLife, showCreatures, readoutView, viewControlsOpen, lifeVersion, selectedColony, introduceColonies,
-    lawView, openLifeSettings, resetLifeLaws, restartWorld: rebuildWorld,
+    lawView, openLifeSettings, resetLifeLaws, restartWorld: rebuildWorld, nextColony, colonyFocusRequest,
     laws, world, seed, tick, paused, speed, mode, exaggeration, figureExaggeration, showWind, showClouds, fullbright,
     maxFps, renderScale, displayHz, gpuName,
     sidebarOpen, panelsOpen,

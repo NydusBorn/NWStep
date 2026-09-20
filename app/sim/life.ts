@@ -14,7 +14,10 @@ export interface Colony {
   id: number
   parents: number[]
   mergedFrom?: number[]
-  origin: 'founder' | 'descendant' | 'lightning' | 'merged'
+  origin: 'founder' | 'descendant' | 'lightning' | 'merged' | 'dispersal'
+  crowdedGathering?: number
+  gatheringSince?: number
+  impulse?: { direction: [number, number, number], remaining: number }
   generation: number
   born: number
   lastBirth: number
@@ -45,6 +48,7 @@ export interface Life {
   crowded: number
   harvested: number
   merges: number
+  dispersals: number
   contacts: Record<string, number>
   events: { tick: number, text: string }[]
 }
@@ -55,7 +59,7 @@ const clamp = (x: number, lo = 0, hi = 1) => Math.max(lo, Math.min(hi, x))
 export function createLife(seed: number): Life {
   return { colonies: [], seeded: false, rng: (seed ^ 0x51f15e) >>> 0, nextId: 1,
     births: 0, lightningBirths: 0, artificialColonies: 0, lastLightningAttempt: -1,
-    deaths: 0, starved: 0, crowded: 0, harvested: 0, merges: 0, contacts: {}, events: [] }
+    deaths: 0, starved: 0, crowded: 0, harvested: 0, merges: 0, dispersals: 0, contacts: {}, events: [] }
 }
 
 function random(life: Life): number {
@@ -218,6 +222,19 @@ export function prepareLife(w: World): ((cell: number, charge: number) => number
       c.cell = nearest(g, c.position, cell)
     }
     c.phase = (c.phase + c.traits.frequency) % (2 * Math.PI)
+    if (c.impulse) {
+      // A brief launch, followed by ordinary wind drift. Project onto the
+      // current tangent plane each tick as the colony travels round the sphere.
+      const radial = c.impulse.direction.reduce((sum, v, k) => sum + v * c.position[k]!, 0)
+      const tangent = c.impulse.direction.map((v, k) => v - radial * c.position[k]!)
+      const norm = Math.max(1e-12, Math.hypot(...tangent))
+      c.position = c.position.map((v, k) => v + tangent[k]! / norm * w.laws.lifeLaunchSpeed!) as [number, number, number]
+      const length = Math.hypot(...c.position)
+      c.position = c.position.map(v => v / length) as [number, number, number]
+      c.cell = nearest(g, c.position, c.cell)
+      c.decision = 'Dispersal impulse; wind still carries the colony'
+      if (--c.impulse.remaining <= 0) c.impulse = undefined
+    }
     const list = buckets.get(c.cell) ?? []
     list.push(c); buckets.set(c.cell, list)
   }
@@ -292,6 +309,31 @@ function reproduce(w: World, parents: Colony[]): void {
   event(w, `Colony ${c.id} born from ${c.parents.join(' + ')} (generation ${c.generation})`)
 }
 
+/** Transfer living creatures, not new births: no accelerated genetic evolution. */
+function disperse(w: World, c: Colony, count: number): void {
+  const n = population(c), plus = rounded(w.life, count * c.positive / n)
+  const share = c.energy * count / n
+  const child = born(w, c.cell, count, { ...c.traits }, [c])
+  child.origin = 'dispersal'
+  child.generation = c.generation
+  child.lastBirth = w.tick
+  child.position = [...c.position]
+  child.positive = plus; child.negative = count - plus
+  c.positive -= plus; c.negative -= count - plus
+  c.energy -= share
+  child.energy = share * (1 - w.laws.lifeLaunchCost!)
+  const angle = random(w.life) * 2 * Math.PI, g = w.sphere.grid
+  child.impulse = {
+    direction: [0, 1, 2].map(k => Math.cos(angle) * g.east[c.cell * 3 + k]! + Math.sin(angle) * g.north[c.cell * 3 + k]!) as [number, number, number],
+    remaining: w.laws.lifeLaunchTicks!
+  }
+  w.life.colonies.push(child)
+  w.life.dispersals++
+  c.crowdedGathering = 0
+  c.gatheringSince = undefined
+  event(w, `Colony ${c.id} launched ${count} creatures as colony ${child.id}`)
+}
+
 export function finishLife(w: World): void {
   if (!w.laws.lifeEnabled) return
   seedColonies(w)
@@ -299,15 +341,29 @@ export function finishLife(w: World): void {
   const life = w.life, g = w.sphere.grid
   const occupancy = new Float64Array(g.count)
   for (const c of life.colonies) occupancy[c.cell] = occupancy[c.cell]! + population(c)
-  for (const c of life.colonies) {
+  for (const c of [...life.colonies]) {
     // Newly introduced founders begin with their artificial reserve untouched.
     if (c.born === w.tick) continue
     c.energy = Math.max(0, c.energy - c.cost)
     let nearby = occupancy[c.cell]!
     for (let k = g.nbrStart[c.cell]!; k < g.nbrStart[c.cell + 1]!; k++) nearby += occupancy[g.nbrList[k]!]! * 0.15
-    const capacity = Math.max(1, w.laws.lifeCapacity! * Math.max(0.25, habitat(w, c.cell)))
+    const capacity = Math.max(1, w.laws.lifeCapacity! * Math.max(w.laws.lifeTransitCapacity!, habitat(w, c.cell)))
     c.crowding = Math.max(0, nearby / capacity - 1)
-    const crowded = Math.min(population(c), rounded(life, population(c) * -Math.expm1(-w.laws.lifeCrowding! * c.crowding)))
+    const isolated = !c.impulse && life.colonies.length < w.laws.lifeMaxColonies!
+      && !life.colonies.some(other => other.id !== c.id && distance(c, other) < w.laws.lifeDispersalIsolation!)
+    const gathering = isolated && c.crowding > 0 && c.energy > 0 && population(c) > 1
+    if (gathering) {
+      c.gatheringSince ??= w.tick
+      c.crowdedGathering = Math.min(population(c) - 1, Math.max(c.crowdedGathering ?? 0, Math.ceil(nearby - capacity)))
+      c.decision = `Gathering ${c.crowdedGathering} creatures for dispersal`
+      if (w.tick - c.gatheringSince >= w.laws.lifeGatherTicks!) disperse(w, c, c.crowdedGathering)
+    } else {
+      c.crowdedGathering = 0
+      c.gatheringSince = undefined
+    }
+    // Collection grants only a short grace; nearby colonies retain ordinary
+    // density pressure. A travelling launch is also protected during its impulse.
+    const crowded = gathering || c.impulse ? 0 : Math.min(population(c), rounded(life, population(c) * -Math.expm1(-w.laws.lifeCrowding! * c.crowding)))
     remove(c, crowded, life); life.crowded += crowded
     if (c.energy <= 0) {
       const starved = Math.min(population(c), Math.max(1, Math.ceil(population(c) / w.laws.lifeReserveTicks!)))
@@ -328,7 +384,7 @@ export function finishLife(w: World): void {
   const adults = [...life.colonies]
   const absorbed = new Set<number>()
   const contacts: Record<string, number> = {}
-  const ready = (c: Colony) => population(c) >= w.laws.lifeSplitPopulation! && c.energy >= reserve(w, c) * 0.6
+  const ready = (c: Colony) => !c.impulse && !c.crowdedGathering && population(c) >= w.laws.lifeSplitPopulation! && c.energy >= reserve(w, c) * 0.6
     && w.tick - c.lastBirth >= w.laws.lifeGenerationDays! * w.laws.rotationPeriod!
   for (let i = 0; i < adults.length; i++) {
     const a = adults[i]!
@@ -337,6 +393,7 @@ export function finishLife(w: World): void {
       const b = adults[j]!
       if (absorbed.has(b.id)) continue
       if (distance(a, b) > colonyRadius(a) + colonyRadius(b)) continue
+      if (a.impulse || b.impulse) continue
       const match = compatibility(a, b)
       if (match < 0.6) {
         const loss = w.laws.lifeContactLoss! * (1 - match)
@@ -376,6 +433,7 @@ function mergeColonies(w: World, a: Colony, b: Colony): void {
   const merged: Colony = {
     ...a, id: w.life.nextId++, parents: [...new Set([...a.parents, ...b.parents])], mergedFrom: [a.id, b.id],
     origin: 'merged',
+    crowdedGathering: 0, gatheringSince: undefined, impulse: undefined,
     generation: Math.max(a.generation, b.generation), born: w.tick, lastBirth: w.tick,
     traits, position, cell: nearest(w.sphere.grid, position, a.cell),
     positive: a.positive + b.positive, negative: a.negative + b.negative,
