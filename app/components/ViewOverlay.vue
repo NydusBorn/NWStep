@@ -95,7 +95,7 @@ const ticks = computed(() => {
         @click="showClouds = !showClouds"
       >
         <span class="font-mono text-[12px] leading-none">☁</span>
-        Highlight
+        Highlight/Убрать тени
       </UButton>
 
       <UButton
