@@ -26,3 +26,6 @@ logs
 # Browser verification artifacts
 .shots/
 .pnpm-store/
+
+.vscode
+

@@ -1,13 +1,16 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { PlanetScene } from '../render/scene'
+import { FrameLimiter } from '../render/frameLimiter'
 import { stepWorld, seek, toMetresPerSecond } from '../sim/world'
 import { createFastForward, advanceFastForward, interruptFastForward, type FastForward } from '../sim/fastForward'
 import { mulberry32 } from '../sim/noise'
 import { useSim } from '../composables/useSim'
+import FpsControl from './FpsControl.vue'
 
 const {
   world, tick, paused, speed, mode, exaggeration, figureExaggeration, showWind, showClouds, fullbright,
+  maxFps, renderScale, displayHz, gpuName,
   selectedCell, unstable, fps, tps, meanTemp, maxWind, terrainVersion,
   seekTarget, seekProgress, fastSeek, rewindLimit, notice,
   select, refreshReading
@@ -32,9 +35,11 @@ function buildScene() {
   scene.showWind = showWind.value
   scene.showClouds = showClouds.value
   scene.fullbright = fullbright.value
+  scene.setRenderScale(renderScale.value)
   scene.rebuildTerrainGeometry()
   scene.refreshField()
   resize()
+  readGpuInfo()
   // dev-only handle so the scene can be poked from the console
   if (import.meta.dev) (window as unknown as Record<string, unknown>).__sim = { scene, world }
 }
@@ -45,18 +50,69 @@ function resize() {
   scene.resize(Math.max(1, r.width), Math.max(1, r.height))
 }
 
-let lastTime = 0
-let frames = 0
+/** The driver string is the difference between “this machine cannot draw faster”
+ *  and “this session is not allowed to present faster”, so the readout shows it. */
+function readGpuInfo() {
+  if (!scene) return
+  try {
+    const gl = scene.renderer.getContext() as WebGLRenderingContext
+    const ext = gl.getExtension('WEBGL_debug_renderer_info')
+    gpuName.value = ext
+      ? String(gl.getParameter(ext.UNMASKED_RENDERER_WEBGL))
+      : String(gl.getParameter(gl.RENDERER))
+  } catch {
+    gpuName.value = ''
+  }
+}
+
+/** Decides which display refreshes are worth rendering, and measures the refresh
+ *  the browser is pacing by. Skipped time is carried into the next frame, so a
+ *  ceiling never changes how fast the world runs. */
+const limiter = new FrameLimiter()
+
 let fpsAcc = 0
 let tickAcc = 0
 let secAcc = 0
+/** Both start due, so the first frame paints a field and a readout rather than a gap. */
+let fieldAcc = FIELD_REFRESH_MS
+let readoutAcc = READOUT_REFRESH_MS
 let stepAcc = 0
 
 /** Simulation ticks per second of wall clock at speed x1. Fixed, so the world
  *  runs at the same pace on a 60 Hz and a 240 Hz display. */
 const TICK_HZ = 60
-/** Leave time for rendering and input, regardless of the requested playback rate. */
-const SIM_BUDGET_MS = 6
+/** How often the field colours are re-uploaded, and how often the probe readout and
+ *  the summary figures are recomputed. Milliseconds rather than "every Nth frame":
+ *  counting frames tied both to the display, so the same world redrew its field at
+ *  15 Hz on a 60 Hz panel and 8 Hz in a 32 Hz Remote Desktop session — the colours
+ *  lagged the simulation for a reason no setting in the app explained. */
+const FIELD_REFRESH_MS = 66
+const READOUT_REFRESH_MS = 200
+/** Share of each frame's wall-clock time the solver may spend, leaving the rest for
+ *  rendering and input. A *share* rather than a fixed per-frame budget is what keeps
+ *  the world's pace off the frame rate: a 32 fps Remote Desktop session has 31 ms
+ *  frames and gets 15 ms of solving each, a 64 fps display has 16 ms frames and gets
+ *  7.8 ms each — half a second of simulation per wall-clock second either way. The
+ *  fixed 6 ms it replaces spent 6 ms *per frame*, so halving the frame rate halved
+ *  the tick rate, and ×16 over RDP ran at a sixth of the speed it does locally. */
+const SIM_BUDGET_SHARE = 0.5
+/** Floor, so even a pathological frame advances the world rather than stalling it. */
+const SIM_BUDGET_MIN_MS = 4
+/** Ceiling on a single frame's solver time. Deliberately high enough that it is a
+ *  sanity bound rather than a governor: it must not bite in the working range, or it
+ *  would put the frame rate back into the tick rate through the back door. At 24 ms
+ *  it clamped everything below ~21 fps, so an 8 fps session ran the world at a third
+ *  of the speed a 32 fps one did. The share already guarantees the browser half of
+ *  every frame whatever its length, so this only bounds the worst single frame. */
+const SIM_BUDGET_MAX_MS = 50
+/** How much unsimulated wall-clock time may be owed before the rest is written off.
+ *  Never less than the frame just seen, or a slow display would discard time the
+ *  solver was perfectly able to run. */
+const MAX_BACKLOG_MS = 100
+
+function simBudgetMs(dtMs: number): number {
+  return Math.min(SIM_BUDGET_MAX_MS, Math.max(SIM_BUDGET_MIN_MS, dtMs * SIM_BUDGET_SHARE))
+}
 let fastJob: FastForward | null = null
 let activeTarget: number | null = null
 let activeWorld = world.value
@@ -64,6 +120,7 @@ let activeWorld = world.value
 function advance(dtMs: number) {
   const w = world.value
   if (!w) return
+  const budgetMs = simBudgetMs(dtMs)
 
   // a requested jump takes priority over normal playback
   if (seekTarget.value !== null) {
@@ -78,8 +135,8 @@ function advance(dtMs: number) {
     }
     const from = w.tick
     const res = fastJob
-      ? { done: advanceFastForward(w, fastJob, SIM_BUDGET_MS), reachable: true }
-      : seek(w, seekTarget.value, SIM_BUDGET_MS)
+      ? { done: advanceFastForward(w, fastJob, budgetMs), reachable: true }
+      : seek(w, seekTarget.value, budgetMs)
     tickAcc += Math.abs(w.tick - from)
     const remaining = Math.abs(seekTarget.value - w.tick)
     seekProgress.value = remaining
@@ -105,11 +162,11 @@ function advance(dtMs: number) {
 
   const mag = Math.abs(speed.value) || 1
   const stepMs = 1000 / (TICK_HZ * mag)
-  stepAcc = Math.min(100, stepAcc + dtMs)
+  stepAcc = Math.min(Math.max(MAX_BACKLOG_MS, dtMs), stepAcc + dtMs)
   if (stepAcc < stepMs) return
 
   if (speed.value > 0) {
-    const deadline = performance.now() + SIM_BUDGET_MS
+    const deadline = performance.now() + budgetMs
     let n = 0
     while (stepAcc >= stepMs) {
       stepWorld(w)
@@ -131,7 +188,7 @@ function advance(dtMs: number) {
     const from = w.tick
     const n = Math.min(w.tick, Math.floor(stepAcc / stepMs))
     stepAcc = 0
-    const res = seek(w, w.tick - n, SIM_BUDGET_MS)
+    const res = seek(w, w.tick - n, budgetMs)
     if (!res.reachable) {
       rewindLimit.value = w.tick
       paused.value = true
@@ -143,9 +200,9 @@ function advance(dtMs: number) {
 
 function loop(now: number) {
   raf = requestAnimationFrame(loop)
-  const dtMs = lastTime ? now - lastTime : 16.7
-  lastTime = now
-  const dtFrames = Math.min(3, Math.max(0.2, dtMs / 16.667))
+  const frame = limiter.read(now)
+  if (!frame) return
+  const { dtMs } = frame
 
   const w = world.value
   if (w && scene) {
@@ -157,23 +214,29 @@ function loop(now: number) {
     }
     tick.value = w.tick
 
-    if (frames % 4 === 0) scene.refreshField()
-    if (frames % 12 === 0) {
+    fieldAcc += dtMs
+    if (fieldAcc >= FIELD_REFRESH_MS) {
+      fieldAcc = 0
+      scene.refreshField()
+    }
+    readoutAcc += dtMs
+    if (readoutAcc >= READOUT_REFRESH_MS) {
+      readoutAcc = 0
       refreshReading()
       if (selectedCell.value !== null) scene.setMarker(selectedCell.value)
       meanTemp.value = w.air.meanTemp
       maxWind.value = toMetresPerSecond(w.air.maxSpeed)
       windStreams.value = scene.windStreamCount
     }
-    scene.render(dtFrames, !paused.value && seekTarget.value === null)
+    scene.render(dtMs, !paused.value && seekTarget.value === null)
   }
 
-  frames++
   fpsAcc++
   secAcc += dtMs
   if (secAcc >= 1000) {
     fps.value = Math.round((fpsAcc * 1000) / secAcc)
     tps.value = Math.round((tickAcc * 1000) / secAcc)
+    displayHz.value = Math.round(limiter.displayHz)
     fpsAcc = 0
     tickAcc = 0
     secAcc = 0
@@ -248,6 +311,8 @@ watch(showClouds, (v) => {
 watch(fullbright, (v) => {
   if (scene) scene.fullbright = v
 })
+watch(maxFps, v => limiter.setMaxFps(v), { immediate: true })
+watch(renderScale, v => scene?.setRenderScale(v))
 watch(selectedCell, c => scene?.setMarker(c))
 </script>
 
@@ -274,12 +339,15 @@ watch(selectedCell, c => scene?.setMarker(c))
     <div class="pointer-events-none absolute bottom-3 left-3 font-mono text-[11px] text-white/35">
       drag to orbit · scroll to zoom · click to probe · right-click to clear
     </div>
-    <div
-      class="pointer-events-none absolute bottom-10 left-3 rounded bg-black/60 px-2 py-1 font-mono text-[11px] text-emerald-200"
-      data-testid="performance"
-    >
-      {{ fps }} FPS · {{ tps }} {{ seekTarget !== null ? 'jump ticks/s' : 'TPS' }}
-      · {{ windStreams }} streams
+    <div class="absolute bottom-10 left-3 flex flex-col items-start gap-1">
+      <FpsControl />
+      <div
+        class="pointer-events-none rounded bg-black/60 px-2 py-1 font-mono text-[11px] text-emerald-200"
+        data-testid="performance"
+      >
+        {{ fps }} FPS · {{ tps }} {{ seekTarget !== null ? 'jump ticks/s' : 'TPS' }}
+        · {{ windStreams }} streams
+      </div>
     </div>
   </div>
 </template>
