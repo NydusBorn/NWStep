@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { useSim } from '../composables/useSim'
 
-const { sidebarOpen, panelsOpen } = useSim()
+const { sidebarOpen, panelsOpen, readoutView, viewControlsOpen } = useSim()
 useHead({ title: 'NWStep — Planetary System' })
 </script>
 
@@ -43,22 +43,50 @@ useHead({ title: 'NWStep — Planetary System' })
               </div>
             </template>
           </ClientOnly>
-          <div class="absolute right-3 top-3 flex max-h-[calc(100%-8rem)] max-w-[calc(100%-1.5rem)] flex-col items-end gap-2">
-            <UButton
-              color="neutral"
-              variant="soft"
-              size="xs"
-              :icon="panelsOpen ? 'i-lucide-panel-right-close' : 'i-lucide-panel-right-open'"
-              :aria-expanded="panelsOpen"
-              label="Readouts"
-              @click="panelsOpen = !panelsOpen"
-            />
+          <div
+            class="absolute right-3 top-3 z-10 flex max-w-[calc(100%-1.5rem)] flex-col items-end gap-2"
+            :class="viewControlsOpen ? 'max-h-[calc(100%-10rem)]' : 'max-h-[calc(100%-4rem)]'"
+          >
+            <div
+              class="flex items-center gap-1"
+              role="group"
+              aria-label="Readout views"
+            >
+              <UButton
+                color="neutral"
+                variant="soft"
+                size="xs"
+                label="Planet"
+                :aria-pressed="panelsOpen && readoutView === 'planet'"
+                @click="readoutView = 'planet'; panelsOpen = true"
+              />
+              <UButton
+                color="neutral"
+                variant="soft"
+                size="xs"
+                label="Life"
+                :aria-pressed="panelsOpen && readoutView === 'life'"
+                @click="readoutView = 'life'; panelsOpen = true"
+              />
+              <UButton
+                color="neutral"
+                variant="soft"
+                size="xs"
+                :icon="panelsOpen ? 'i-lucide-panel-right-close' : 'i-lucide-panel-right-open'"
+                :aria-expanded="panelsOpen"
+                :aria-label="panelsOpen ? 'Hide readouts' : 'Show readouts'"
+                @click="panelsOpen = !panelsOpen"
+              />
+            </div>
             <div
               v-if="panelsOpen"
               class="flex min-h-0 flex-col gap-2 overflow-y-auto"
             >
-              <CellInspector />
-              <FigurePanel />
+              <ColonyPanel v-if="readoutView === 'life'" />
+              <template v-else>
+                <CellInspector />
+                <FigurePanel />
+              </template>
             </div>
           </div>
           <ViewOverlay />

@@ -3,7 +3,7 @@ import { computed } from 'vue'
 import type { FieldMode } from '../render/scene'
 import { useSim } from '../composables/useSim'
 
-const { mode, maxWind, showWind, showClouds, fullbright } = useSim()
+const { mode, maxWind, showWind, showClouds, fullbright, showLife, showCreatures, viewControlsOpen } = useSim()
 
 const MODES: { id: FieldMode, label: string }[] = [
   { id: 'elevation', label: 'Terrain' },
@@ -24,8 +24,17 @@ const ticks = computed(() => {
 
 <template>
   <div class="pointer-events-none absolute inset-x-0 bottom-0 flex flex-col items-center gap-2 pb-3">
+    <UButton
+      color="neutral"
+      variant="soft"
+      size="xs"
+      class="pointer-events-auto mr-3 self-end rounded-full"
+      :aria-expanded="viewControlsOpen"
+      :label="viewControlsOpen ? 'Hide view controls' : 'Show view controls'"
+      @click="viewControlsOpen = !viewControlsOpen"
+    />
     <div
-      v-if="showWind"
+      v-if="viewControlsOpen && showWind"
       class="pointer-events-auto flex max-w-full flex-wrap items-center justify-center gap-2 rounded-full border border-white/10 bg-[#0b0e16]/90 px-3 py-1.5 backdrop-blur"
     >
       <span class="font-mono text-[10px] uppercase tracking-wider text-white/40">wind</span>
@@ -47,7 +56,10 @@ const ticks = computed(() => {
       <span class="font-mono text-[10px] text-white/30">m/s</span>
     </div>
 
-    <div class="pointer-events-auto flex max-w-full flex-wrap items-center justify-center gap-2">
+    <div
+      v-if="viewControlsOpen"
+      class="pointer-events-auto flex max-w-full flex-wrap items-center justify-center gap-2"
+    >
       <div class="flex overflow-hidden rounded-full border border-white/10 bg-[#0b0e16]/90 backdrop-blur">
         <UButton
           v-for="m in MODES"
@@ -96,6 +108,30 @@ const ticks = computed(() => {
       >
         <span class="font-mono text-[12px] leading-none">{{ fullbright ? '☀' : '◐' }}</span>
         Fullbright
+      </UButton>
+      <UButton
+        color="neutral"
+        variant="ghost"
+        class="rounded-full border border-white/10 bg-[#0b0e16]/90 px-2 py-1.5 text-[11px] backdrop-blur"
+        :class="showLife ? 'text-emerald-200' : 'text-white/45'"
+        :aria-pressed="showLife"
+        :aria-label="showLife ? 'Hide colonies' : 'Show colonies'"
+        title="Toggle colony outlines only"
+        @click="showLife = !showLife"
+      >
+        {{ showLife ? 'Hide colonies' : 'Show colonies' }}
+      </UButton>
+      <UButton
+        color="neutral"
+        variant="ghost"
+        class="rounded-full border border-white/10 bg-[#0b0e16]/90 px-2 py-1.5 text-[11px] backdrop-blur"
+        :class="showCreatures ? 'text-emerald-200' : 'text-white/45'"
+        :aria-pressed="showCreatures"
+        :aria-label="showCreatures ? 'Hide creatures' : 'Show creatures'"
+        title="Toggle electrical creature sparkles only"
+        @click="showCreatures = !showCreatures"
+      >
+        {{ showCreatures ? 'Hide creatures' : 'Show creatures' }}
       </UButton>
     </div>
   </div>

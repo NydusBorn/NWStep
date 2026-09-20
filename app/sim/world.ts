@@ -1,4 +1,5 @@
 import { buildSphere, type Sphere } from './icosphere'
+import { createLife, prepareLife, finishLife, type Life } from './life'
 import { generateTerrain, type Terrain } from './terrain'
 import { generateCaves, type Caves } from './caves'
 import { createClouds, stepClouds, type Clouds } from './clouds'
@@ -31,6 +32,7 @@ export interface World {
   terrain: Terrain
   caves: Caves
   clouds: Clouds
+  life: Life
   air: Air
   laws: Laws
   bodies: Body[]
@@ -113,6 +115,7 @@ export function createWorld(seed = 20260919, laws: Laws = defaultLaws()): World 
     terrain,
     caves,
     clouds,
+    life: createLife(seed),
     air,
     laws: clamped,
     bodies,
@@ -260,7 +263,9 @@ export function stepGlobals(world: World): void {
 export function stepWorld(world: World, keepHistory = true): void {
   stepAir(world.sphere.grid, world.terrain, world.caves, world.air, world.laws, world.tick, DT)
   stepUpperAir(world.sphere.grid, world.terrain, world.air, world.laws, DT)
-  stepClouds(world.sphere.grid, world.terrain, world.air, world.clouds, world.laws, DT, world.tick)
+  const consumeCharge = prepareLife(world)
+  stepClouds(world.sphere.grid, world.terrain, world.air, world.clouds, world.laws, DT, world.tick, consumeCharge)
+  finishLife(world)
   stepGlobals(world)
   if (keepHistory) record(world.history, world)
   if (world.air.unstable) world.paused = true
@@ -286,6 +291,7 @@ export function regenerateTerrain(world: World): void {
   world.terrain = generateTerrain(world.sphere, world.laws, world.seed)
   world.caves = generateCaves(world.sphere, world.terrain, world.laws, world.seed)
   world.clouds = createClouds(world.sphere.grid, world.terrain, world.laws)
+  world.life = createLife(world.seed)
 }
 
 export function resetOrbits(world: World): void {

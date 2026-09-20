@@ -35,13 +35,42 @@ export type LawGroup
     | 'Fluid'
     | 'Clouds'
     | 'Electrics'
+    | 'Life'
     | 'Geology'
 
 export const LAW_GROUPS: LawGroup[] = [
-  'Gravitation', 'Rotation', 'Thermodynamics', 'Fluid', 'Clouds', 'Electrics', 'Geology'
+  'Gravitation', 'Rotation', 'Thermodynamics', 'Fluid', 'Clouds', 'Electrics', 'Life', 'Geology'
 ]
 
 export const LAW_DEFS: LawDef[] = [
+  ...([
+    ['lifeEnabled', 'Enable life', 1, 0, 1, 1, '1 = simulate colonies', 'Disabling life freezes colonies. Exact replay remains required after founders arrive.'],
+    ['lifeFounders', 'Founder colonies', 24, 1, 100, 1, 'N founders in dense habitat', 'Applied once when weather first provides habitat; restart the world for a new batch.'],
+    ['lifeSeedDelay', 'Founder weather warmup', 96, 0, 1000, 1, 'tick ≥ warmup', 'Allow storms to develop before introducing the first batch. Seeding also waits for enough occupied cells.'],
+    ['lifeSeedDensity', 'Founder habitat density', 1, 0.1, 10, 0.1, 'cloud/cloudScale + dust/dustScale ≥ density', 'Automatic founders wait for at least ten sufficiently dense cells per colony. The Life panel can force an artificial batch sooner.'],
+    ['lifeSeparation', 'Founder separation', 0.18, 0.03, 0.6, 0.01, 'angle ≥ separation', 'Minimum separation in radians. Sparse habitat can produce fewer founders.'],
+    ['lifeCloudScale', 'Cloud habitat scale', 0.0001, 0.00001, 0.001, 0.00001, 'Hc = cloud / (cloud + scale)', 'Condensate loading at half habitat quality.'],
+    ['lifeDustScale', 'Dust habitat scale', 0.4, 0.01, 3, 0.01, 'Hd = dust / (dust + scale)', 'Dust loading at half habitat quality.'],
+    ['lifeDustEfficiency', 'Dust feeding efficiency', 0.3, 0.05, 0.8, 0.01, 'H = Hc + (1−Hc)·ηd·Hd', 'Cloud feeding approaches full efficiency; dust alone remains less efficient.'],
+    ['lifeCapacity', 'Local carrying capacity', 220, 20, 1000, 10, 'K = capacity · H', 'Creature capacity per cell. Neighbouring colonies also contribute to crowding.'],
+    ['lifeCrowding', 'Overdensity mortality', 0.18, 0.01, 0.8, 0.01, 'deaths/N = 1−exp(−k·max(0,N/K−1))', 'Crowding kills even well-fed creatures.'],
+    ['lifeMaintenance', 'Creature maintenance', 0.000003, 0.0000001, 0.002, 0.0000001, 'cost = N·metabolism·maintenance', 'Electrical energy consumed by each creature per tick. Matched to the atmosphere’s finite charging rate.'],
+    ['lifeReserveTicks', 'Survival reserve', 48, 2, 100, 1, 'Emax = maintenance·N·reserve', 'Maximum time a full reserve can fund maintenance without food. One tick is 15 minutes.'],
+    ['lifeHarvest', 'Harvest rate', 8, 1, 16, 0.1, 'withdraw ≤ maintenance·N·rate', 'Maximum electrical withdrawal per tick; shared fairly before lightning breakdown.'],
+    ['lifeGrowth', 'Population growth', 0.008, 0, 0.2, 0.001, 'births ≤ N·growth·H', 'Births require stored energy and local capacity. Population growth does not mutate existing traits.'],
+    ['lifeSteering', 'Wind-relative steering', 0.12, 0, 0.3, 0.01, '|steering| ≤ fraction·|wind|', 'Food and social votes weakly bias drift. Strong wind cannot be reversed.'],
+    ['lifeMutation', 'Birth variation ±', 0.015, 0, 0.5, 0.001, 'child trait = parent mean · (1 ± rate)', 'Only descendants mutate. Symmetric changes can help or harm. Default ±1.5% per generation; adult traits never drift daily.'],
+    ['lifeGenerationDays', 'Generation interval (days)', 25, 1, 200, 1, 'age and cooldown ≥ days · rotationPeriod', 'Planet days before budding or reproduction. Small inherited changes accumulate over hundreds of days, without guaranteed improvement.'],
+    ['lifeSplitPopulation', 'Reproduction population', 45, 20, 300, 5, 'N ≥ threshold', 'Parents must also hold at least 60% of their energy reserve.'],
+    ['lifeContactLoss', 'Incompatible contact loss', 0.02, 0, 0.5, 0.01, 'ΔE = −loss·incompatibility·E', 'Opposing pulse phases and charge imbalance dissipate energy.'],
+    ['lifeMergeTicks', 'Compatible contact to merge', 3, 1, 30, 1, 'overlap and compatibility for N ticks → merge', 'Sustained compatible overlap joins populations and energy. Passing or incompatible colonies remain separate.'],
+    ['lifeSpontaneousChance', 'Lightning birth chance', 0.00005, 0, 0.001, 0.00001, 'p/strike = chance / (1 + population/scale)²', 'Rare 1–3-creature births from actual weather discharges only. Broad random traits can be harmful. Zero disables spontaneous life.'],
+    ['lifeSpontaneousCap', 'Lightning birth ceiling', 0.003, 0, 0.05, 0.001, 'p/tick ≤ ceiling / (1 + population/scale)²', 'Even intense storms only give a small push. At most one spontaneous colony per tick.'],
+    ['lifeSpontaneousScale', 'Population suppression scale', 20, 1, 200, 1, 'suppression = (1 + creatures/scale)²', 'Births are most likely near extinction and become much rarer with a large population.'],
+    ['lifeMaxColonies', 'Colony ceiling', 256, 32, 1024, 32, 'colonies ≤ ceiling', 'Computational birth ceiling, separate from ecological overcrowding deaths.']
+  ] as const).map(([key, label, value, min, max, step, formula, hint]) => ({
+    key, label, value, min, max, step, formula, hint, group: 'Life' as const
+  })),
   {
     key: 'verticalExchange', group: 'Fluid', label: 'Vertical exchange',
     value: 1, min: 0, max: 3, step: 0.05,
@@ -218,9 +247,14 @@ export const LAW_DEFS: LawDef[] = [
   },
   {
     key: 'dragCoefficient', group: 'Fluid', label: 'Surface drag  β',
-    value: 0.12, min: 0.001, max: 1.5, step: 0.001,
+    value: 0.01, min: 0.001, max: 1.5, step: 0.001,
     formula: 'a_drag = −β·(1 + roughness)·v',
-    hint: 'Friction against the ground, amplified by terrain roughness. Crank it up and wind can never organise.'
+    hint: 'Friction against the ground, amplified by terrain roughness, and also the surface '
+      + 'stress that raises dust. At 0.12 it destroyed 18% of the wind every tick — a tenth of '
+      + 'a day — so the air never reached geostrophic balance and simply ran straight down the '
+      + 'pressure gradient from pole to equator. Lowering it lets the flow organise into bands '
+      + '(zonal/meridional 1.06 -> 2.35) and, because it is the same coefficient that sets '
+      + 'saltation stress, thins the planet-wide dust haze into discrete storms.'
   },
   {
     key: 'terrainBlocking', group: 'Fluid', label: 'Terrain blocking',
@@ -288,7 +322,7 @@ export const LAW_DEFS: LawDef[] = [
   },
   {
     key: 'vapourSupply', group: 'Clouds', label: 'Sublimation rate',
-    value: 1.6, min: 0, max: 5, step: 0.01,
+    value: 80, min: 0, max: 300, step: 1,
     formula: 'dq/dt = S·frost',
     hint: 'How fast the frost turns straight to vapour. Raise it and the ranges start smoking.'
   },
@@ -359,8 +393,17 @@ export const LAW_DEFS: LawDef[] = [
       + 'planet is swept clean. Raise it and storms vent upward and spread downwind.'
   },
   {
+    key: 'dustConvection', group: 'Clouds', label: 'Daytime convective lifting',
+    value: 3, min: 0, max: 10, step: 0.1,
+    formula: 'spread += I·convect·sunlit·u*t³',
+    hint: 'Dust devils and the sub-surface overpressure sunlight drives through the soil, '
+      + 'which lift dust where the mean wind alone could not. It is what stops calm ground '
+      + 'becoming a permanent dust trap — but it acts everywhere the sun shines, so turning '
+      + 'it up buries the planet in an even haze and storms stop standing out against it.'
+  },
+  {
     key: 'dustSettling', group: 'Clouds', label: 'Dust settling',
-    value: 0.003, min: 0, max: 0.3, step: 0.001,
+    value: 0.01, min: 0, max: 0.3, step: 0.001,
     formula: 'Δdust = −k·dust',
     hint: 'Gravitational fallout. It is what decides whether a storm clears in hours or hangs '
       + 'over the planet for a season.'

@@ -91,6 +91,7 @@ test('rewind restores clouds, strain and escaped bodies, then replays identicall
 
 test('fast jump preserves global evolution, lands exactly and creates complete history', () => {
   const exact = createWorld(), fast = createWorld()
+  fast.laws.lifeEnabled = 0
   const target = 5000
   for (let i = 0; i < target; i++) stepGlobals(exact)
   const job = createFastForward(fast, target)

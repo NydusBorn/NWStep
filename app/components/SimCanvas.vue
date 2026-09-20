@@ -13,7 +13,7 @@ const {
   maxFps, renderScale, displayHz, gpuName,
   selectedCell, unstable, fps, tps, meanTemp, maxWind, terrainVersion,
   seekTarget, seekProgress, fastSeek, rewindLimit, notice,
-  select, refreshReading
+  select, refreshReading, showLife, showCreatures, selectedColony, readoutView, panelsOpen
 } = useSim()
 
 const host = ref<HTMLDivElement | null>(null)
@@ -34,6 +34,9 @@ function buildScene() {
   scene.figureExaggeration = figureExaggeration.value
   scene.showWind = showWind.value
   scene.showClouds = showClouds.value
+  scene.showLife = showLife.value
+  scene.showCreatures = showCreatures.value
+  scene.selectedColony = selectedColony.value
   scene.fullbright = fullbright.value
   scene.setRenderScale(renderScale.value)
   scene.rebuildTerrainGeometry()
@@ -73,9 +76,6 @@ const limiter = new FrameLimiter()
 let fpsAcc = 0
 let tickAcc = 0
 let secAcc = 0
-/** Both start due, so the first frame paints a field and a readout rather than a gap. */
-let fieldAcc = FIELD_REFRESH_MS
-let readoutAcc = READOUT_REFRESH_MS
 let stepAcc = 0
 
 /** Simulation ticks per second of wall clock at speed x1. Fixed, so the world
@@ -88,6 +88,9 @@ const TICK_HZ = 60
  *  lagged the simulation for a reason no setting in the app explained. */
 const FIELD_REFRESH_MS = 66
 const READOUT_REFRESH_MS = 200
+/** Both start due, so the first frame paints a field and a readout rather than a gap. */
+let fieldAcc = FIELD_REFRESH_MS
+let readoutAcc = READOUT_REFRESH_MS
 /** How much of the DISPLAY's frame interval the solver may occupy, once the measured
  *  cost of drawing has been taken out of it. Budgeting against the interval rather
  *  than a fixed per-frame constant is what keeps the world's pace off the frame rate:
@@ -119,6 +122,8 @@ const MAX_BACKLOG_MS = 100
 /** Smoothed cost of drawing one frame. Seeded pessimistically so the first frames do
  *  not overcommit before anything has actually been measured. */
 let renderMs = 10
+/** Smoothed cost of one simulation tick, used to stop before overrunning the budget. */
+let tickMs = 2
 
 function simBudgetMs(): number {
   const spare = limiter.framePeriodMs * SIM_BUDGET_SHARE - renderMs - SIM_SAFETY_MS
@@ -139,10 +144,11 @@ function advance(dtMs: number) {
       if (fastJob && activeWorld === w) interruptFastForward(w, fastJob)
       activeTarget = seekTarget.value
       activeWorld = w
-      fastJob = fastSeek.value && seekTarget.value - w.tick > 2 * w.laws.rotationPeriod!
+      fastJob = fastSeek.value && !w.laws.lifeEnabled && !w.life.seeded && seekTarget.value - w.tick > 2 * w.laws.rotationPeriod!
         ? createFastForward(w, seekTarget.value)
         : null
       if (fastJob) notice.value = 'Fast jump: global evolution is preserved; destination weather is approximated. Rewind history restarts on arrival.'
+      else if (fastSeek.value && (w.laws.lifeEnabled || w.life.seeded)) notice.value = 'Exact replay preserves colony births, deaths and ancestry.'
     }
     const from = w.tick
     const res = fastJob
@@ -180,7 +186,18 @@ function advance(dtMs: number) {
     const deadline = performance.now() + budgetMs
     let n = 0
     while (stepAcc >= stepMs) {
+      // Do not START a tick the budget cannot finish. Checking only afterwards was
+      // fine while a tick cost ~2 ms against a ~25 ms budget, but at 10,242 cells one
+      // costs ~9 ms, so the last tick routinely ran 9 ms past the deadline, overran
+      // vsync and halved the frame rate. One tick always runs, or the world stalls.
+      const started = performance.now()
+      // Half a tick of slack rather than a whole one. Demanding the entire tick fit
+      // left most of a frame idle whenever the budget was not a clean multiple of the
+      // tick cost -- it held 32 fps but threw away a third of the throughput. Half a
+      // tick is a bounded overrun the frame can absorb.
+      if (n > 0 && started + tickMs * 0.5 > deadline) break
       stepWorld(w)
+      tickMs += (performance.now() - started - tickMs) * 0.1
       stepAcc -= stepMs
       n++
       if (w.paused || performance.now() >= deadline) break
@@ -274,13 +291,23 @@ function onContextMenu(e: MouseEvent) {
 }
 
 function onPointerUp(e: PointerEvent) {
-  if (!scene || !canvas.value) return
+  if (!scene || !canvas.value || e.button !== 0) return
   if (Math.hypot(e.clientX - downX, e.clientY - downY) > 6) return // it was a camera drag
   const r = canvas.value.getBoundingClientRect()
   const ndcX = ((e.clientX - r.left) / r.width) * 2 - 1
   const ndcY = -(((e.clientY - r.top) / r.height) * 2 - 1)
+  const colony = scene.pickColony(ndcX, ndcY)
+  if (colony !== null) {
+    selectedColony.value = colony
+    readoutView.value = 'life'
+    panelsOpen.value = true
+    select(null)
+    scene.setMarker(null)
+    return
+  }
   const cell = scene.pick(ndcX, ndcY)
   select(cell)
+  if (cell !== null) readoutView.value = 'planet'
   scene.setMarker(cell)
 }
 
@@ -329,6 +356,15 @@ watch(fullbright, (v) => {
 watch(maxFps, v => limiter.setMaxFps(v), { immediate: true })
 watch(renderScale, v => scene?.setRenderScale(v))
 watch(selectedCell, c => scene?.setMarker(c))
+watch(showLife, (v) => {
+  if (scene) scene.showLife = v
+})
+watch(selectedColony, (v) => {
+  if (scene) scene.selectedColony = v
+})
+watch(showCreatures, (v) => {
+  if (scene) scene.showCreatures = v
+})
 </script>
 
 <template>

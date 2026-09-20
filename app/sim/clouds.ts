@@ -94,6 +94,8 @@ export interface Clouds {
   cloudAloft: Float32Array
   /** cells that broke down this tick */
   flashes: number[]
+  /** Recent actual breakdowns, retained so fast playback does not miss every bolt. */
+  flashEvents: { cell: number, tick: number }[]
   maxCloud: number
   maxDust: number
   maxCharge: number
@@ -136,18 +138,7 @@ const T_CHARGE_WIDTH = 9
  *  breakdown rather than saturating every tick -- charge that pins itself at the
  *  threshold carries no information and the sky just strobes. */
 const CHARGE_UNIT = 9000
-/** Convective share of the gust spread, in units of the threshold cube, at local noon.
- *  Turbulence driven by surface heating rather than by the mean wind: dust devils, and
- *  the sub-surface overpressure that insolation drives through the soil, both of which
- *  lower the effective threshold in nominally calm air. Scaled by the sun, so it is a
- *  daytime process that sweeps around the planet with the terminator.
- *
- *  It is not a fudge factor for a stuck model -- Mars GCMs have the same problem, and
- *  the measured saltation threshold "should be exceeded only rarely" by modelled winds
- *  while dust is in fact raised constantly, so they resort to an artificially reduced
- *  threshold (Musiolik et al. 2018, arXiv:1801.08787). This is that reduction, applied
- *  as a smooth gust distribution and only where the sun is actually shining. */
-const CONVECTIVE_GUST = 3
+
 /** Dust aloft falls at this fraction of the surface settling rate: it is smaller
  *  grains that got carried up, and they have further to fall. */
 const ALOFT_SETTLE = 0.3
@@ -224,6 +215,7 @@ export function createClouds(grid: Grid, terrain: Terrain, laws: Laws): Clouds {
     frost,
     updraft: new Float32Array(n),
     flashes: [],
+    flashEvents: [],
     maxCloud: 1e-9,
     maxDust: 1e-9,
     maxCharge: 1e-9,
@@ -238,13 +230,15 @@ export function stepClouds(
   c: Clouds,
   laws: Laws,
   dt: number,
-  tick = 0
+  tick = 0,
+  consumeCharge?: (cell: number, available: number) => number
 ): void {
   const n = grid.count
   const transport = windTransport(grid)
   const [sunX, sunY, sunZ] = sunDirection(tick, laws)
 
   c.flashes.length = 0
+  c.flashEvents = c.flashEvents.filter(event => tick - event.tick < 6)
 
   const oro = laws.orographicLift!
   const conv = laws.convergenceLift!
@@ -254,6 +248,7 @@ export function stepClouds(
   const liftC = laws.dustLifting!
   const uT = laws.dustThreshold!
   const gust = laws.dustGustiness!
+  const convect = laws.dustConvection!
   const settle = laws.dustSettling!
   const loft = laws.tracerLofting!
   const fallRate = laws.cloudFallout!
@@ -291,7 +286,7 @@ export function stepClouds(
     const sunlit = Math.max(0, grid.pos[i * 3]! * sunX + grid.pos[i * 3 + 1]! * sunY + grid.pos[i * 3 + 2]! * sunZ)
     const ustar = sp * Math.sqrt(cd * (1 + terrain.roughness[i]!))
     const u3 = ustar * ustar * ustar
-    const flux = gustedExcess(u3 - uT3, gust * (3 * u3 + CONVECTIVE_GUST * sunlit * uT3)) * liftC * DUST_UNIT
+    const flux = gustedExcess(u3 - uT3, gust * (3 * u3 + convect * sunlit * uT3)) * liftC * DUST_UNIT
     if (flux > 0) {
       const lifted = Math.min(c.surfaceDust[i]!, flux * dt)
       c.dust[i] = c.dust[i]! + lifted
@@ -407,9 +402,11 @@ export function stepClouds(
     const dustCharging = dustCharge * c.dust[i]! * sp * DUST_CHARGE_UNIT
     let q = c.charge[i]! + (iceCharging + dustCharging) * dt
     q -= q * Math.min(0.9, leak * dt)
+    if (consumeCharge) q -= Math.min(q, Math.max(0, consumeCharge(i, q)))
 
     if (q > breakdown) {
       c.flashes.push(i)
+      c.flashEvents.push({ cell: i, tick })
       q *= 0.12
     }
     c.charge[i] = Math.max(0, q)
@@ -433,6 +430,7 @@ export function stepClouds(
   }
 
   c.maxCloud = maxCloud
+  if (c.flashEvents.length > 96) c.flashEvents.splice(0, c.flashEvents.length - 96)
   c.maxDust = maxDust
   c.maxCharge = maxCharge
   c.stormCells = storms

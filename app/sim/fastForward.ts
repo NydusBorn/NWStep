@@ -14,7 +14,8 @@ export interface FastForward {
  * 24 weather ticks. This is an approximation, not a historical weather replay. */
 export function createFastForward(world: World, target: number): FastForward {
   if (!Number.isSafeInteger(target) || target < world.tick) throw new RangeError('Invalid forward target')
-  return { target, weatherStart: Math.max(world.tick, target - 24), prepared: false }
+  const exact = world.laws.lifeEnabled || world.life.seeded
+  return { target, weatherStart: exact ? world.tick : Math.max(world.tick, target - 24), prepared: !!exact }
 }
 
 /** Make an interrupted jump a valid resumable world, with fresh local weather

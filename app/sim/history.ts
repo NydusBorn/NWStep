@@ -1,6 +1,7 @@
 import type { World, Body } from './world'
 import type { Air } from './air'
 import type { Clouds } from './clouds'
+import type { Life } from './life'
 import { computeFigure } from './shape'
 
 /** Complete checkpoints include weather, bodies and the slowly evolving solid
@@ -9,6 +10,7 @@ export interface Snapshot {
   tick: number
   air: Air
   clouds: Clouds
+  life: Life
   bodies: Body[]
   strain: Float64Array
   escaped: string[]
@@ -37,6 +39,7 @@ export function record(h: History, world: World, force = false): void {
     tick: world.tick,
     air: structuredClone(world.air),
     clouds: structuredClone(world.clouds),
+    life: structuredClone(world.life),
     bodies: world.bodies.map(b => ({ ...b, pos: [...b.pos], vel: [...b.vel], trail: [] })),
     strain: world.strain.slice(),
     escaped: [...world.escaped]
@@ -54,6 +57,7 @@ export function findFrame(h: History, tick: number): Snapshot | null {
 export function restore(world: World, snap: Snapshot): void {
   world.air = structuredClone(snap.air)
   world.clouds = structuredClone(snap.clouds)
+  world.life = structuredClone(snap.life)
   world.bodies = structuredClone(snap.bodies)
   world.strain.set(snap.strain)
   world.escaped = [...snap.escaped]

@@ -1,4 +1,5 @@
 import { computed, reactive, ref, shallowRef, watch } from 'vue'
+import { seedColonies } from '../sim/life'
 import { clampLaws, defaultLaws, LAW_DEFS, TERRAIN_LAWS, type Laws } from '../sim/laws'
 import {
   createWorld, regenerateTerrain, resetOrbits, resetHistory, readCell, readFigure,
@@ -27,6 +28,13 @@ const exaggeration = ref(5)
 const figureExaggeration = ref(2)
 const showWind = ref(true)
 const showClouds = ref(true)
+const showLife = ref(true)
+const showCreatures = ref(true)
+const readoutView = ref<'planet' | 'life'>('planet')
+const viewControlsOpen = ref(true)
+const lifeVersion = ref(0)
+const lawView = ref<'all' | 'life'>('all')
+const selectedColony = ref<number | null>(null)
 const fullbright = ref(false)
 /** Requested frame-rate ceiling in fps; 0 renders every display refresh. The loop
  *  can only ever go *slower* than the display: over Remote Desktop the session is
@@ -68,7 +76,7 @@ function persist() {
   saveTimer = setTimeout(() => {
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify({
-        v: 5,
+        v: 6,
         seed: seed.value,
         laws: { ...laws },
         mode: mode.value,
@@ -81,7 +89,9 @@ function persist() {
         showClouds: showClouds.value,
         fullbright: fullbright.value,
         sidebarOpen: sidebarOpen.value,
-        panelsOpen: panelsOpen.value
+        panelsOpen: panelsOpen.value,
+        showLife: showLife.value, showCreatures: showCreatures.value, readoutView: readoutView.value,
+        viewControlsOpen: viewControlsOpen.value
       }))
     } catch { /* storage may be unavailable; the sim does not depend on it */ }
   }, 400)
@@ -106,11 +116,28 @@ function restore() {
       fullbright?: boolean
       sidebarOpen?: boolean
       panelsOpen?: boolean
+      showLife?: boolean
+      showCreatures?: boolean
+      readoutView?: 'planet' | 'life'
+      viewControlsOpen?: boolean
     }
-    if (save.v !== 3 && save.v !== 4 && save.v !== 5) return
+    if (save.v !== 3 && save.v !== 4 && save.v !== 5 && save.v !== 6) return
     if (typeof save.seed === 'number') seed.value = save.seed
     if (save.laws) {
       const clean = clampLaws(save.laws)
+      if (save.v < 6) {
+        const previousDefaults: Record<string, number> = {
+          lifeMaintenance: 0.00012, lifeReserveTicks: 16, lifeHarvest: 6,
+          lifeGrowth: 0.04, lifeMutation: 0.12, lifeContactLoss: 0.12
+        }
+        const defaults = defaultLaws()
+        for (const [key, old] of Object.entries(previousDefaults)) {
+          if (save.laws[key] === old) clean[key] = defaults[key]!
+        }
+        if (save.laws.lifeMaturity !== undefined && save.laws.lifeMaturity !== 30 && save.laws.lifeGenerationDays === undefined) {
+          clean.lifeGenerationDays = Math.max(1, Math.min(200, save.laws.lifeMaturity / clean.rotationPeriod!))
+        }
+      }
       // Migrate only the old defaults; preserve deliberately customised laws.
       if (save.v === 3 && clean.dustSettling === 0.03) clean.dustSettling = 0.003
       if (save.v === 3 && clean.dustThreshold === 0.004) clean.dustThreshold = 0.002
@@ -127,6 +154,10 @@ function restore() {
     if (typeof save.fullbright === 'boolean') fullbright.value = save.fullbright
     if (typeof save.sidebarOpen === 'boolean') sidebarOpen.value = save.sidebarOpen
     if (typeof save.panelsOpen === 'boolean') panelsOpen.value = save.panelsOpen
+    if (typeof save.showLife === 'boolean') showLife.value = save.showLife
+    if (typeof save.showCreatures === 'boolean') showCreatures.value = save.showCreatures
+    if (save.readoutView === 'planet' || save.readoutView === 'life') readoutView.value = save.readoutView
+    if (typeof save.viewControlsOpen === 'boolean') viewControlsOpen.value = save.viewControlsOpen
   } catch { /* a corrupt save must not stop the app from starting */ }
 }
 
@@ -175,6 +206,7 @@ export function useSim() {
     world.value = w
     tick.value = 0
     selectedCell.value = null
+    selectedColony.value = null
     reading.value = null
     rewindLimit.value = null
     terrainVersion.value++
@@ -273,6 +305,28 @@ export function useSim() {
     if (w) resetHistory(w)
   }
 
+  function openLifeSettings() {
+    lawView.value = 'life'
+    sidebarOpen.value = true
+  }
+
+  function resetLifeLaws() {
+    const defaults = defaultLaws()
+    for (const d of LAW_DEFS) if (d.group === 'Life') laws[d.key] = defaults[d.key]!
+  }
+
+  function introduceColonies(count: number): number {
+    const w = world.value
+    if (!w || seekTarget.value !== null || regenerating.value) return 0
+    const created = seedColonies(w, count)
+    if (created) {
+      resetHistory(w)
+      selectedColony.value = w.life.colonies[w.life.colonies.length - created]!.id
+      lifeVersion.value++
+    }
+    return created
+  }
+
   function resume() {
     seekTarget.value = null
     unstable.value = null
@@ -284,10 +338,11 @@ export function useSim() {
   }
 
   watch([showWind, showClouds, fullbright, sidebarOpen, panelsOpen, mode, exaggeration, figureExaggeration,
-    maxFps, renderScale], persist)
+    maxFps, renderScale, showLife, showCreatures, readoutView, viewControlsOpen], persist)
 
   const clock = computed(() => clockOf(tick.value, laws))
   const historyReach = computed(() => {
+    void lifeVersion.value
     // History is mutated in place; the displayed tick invalidates this readout.
     void tick.value
     const w = world.value
@@ -298,6 +353,8 @@ export function useSim() {
   })
 
   return {
+    showLife, showCreatures, readoutView, viewControlsOpen, lifeVersion, selectedColony, introduceColonies,
+    lawView, openLifeSettings, resetLifeLaws, restartWorld: rebuildWorld,
     laws, world, seed, tick, paused, speed, mode, exaggeration, figureExaggeration, showWind, showClouds, fullbright,
     maxFps, renderScale, displayHz, gpuName,
     sidebarOpen, panelsOpen,

@@ -1,18 +1,22 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { LAW_GROUPS, lawsByGroup } from '../sim/laws'
 import { tidalLockPeriod } from '../sim/world'
 import { useSim } from '../composables/useSim'
 
 const {
   laws, seed, exaggeration, figureExaggeration, regenerating,
-  newSeed, resetLaws, relaunchMoons
+  newSeed, resetLaws, relaunchMoons, lawView, resetLifeLaws
 } = useSim()
 const groups = lawsByGroup()
 const open = ref<Record<string, boolean>>(
   Object.fromEntries(LAW_GROUPS.map(g => [g, true]))
 )
 const expanded = ref<string | null>(null)
+const visibleGroups = computed(() => lawView.value === 'life' ? ['Life'] as const : LAW_GROUPS)
+watch(lawView, (value) => {
+  if (value === 'life') open.value.Life = true
+})
 
 function snapToLock() {
   // exact, not rounded: a tick of error here shows up as the bulge slowly libating
@@ -20,7 +24,7 @@ function snapToLock() {
 }
 
 function fmt(v: number, step: number): string {
-  const dp = step >= 1 ? 0 : step >= 0.1 ? 1 : step >= 0.01 ? 2 : 3
+  const dp = Math.min(8, Math.max(0, Math.ceil(-Math.log10(step))))
   return v.toFixed(dp)
 }
 </script>
@@ -30,18 +34,47 @@ function fmt(v: number, step: number): string {
     <div class="border-b border-white/10 px-4 py-3">
       <div class="flex items-start justify-between gap-2">
         <div class="text-[13px] font-semibold tracking-wide text-white/90">
-          Laws of this universe
+          {{ lawView === 'life' ? 'Life parameters' : 'Laws of this universe' }}
         </div>
       </div>
       <p class="mt-1 text-[11px] leading-relaxed text-white/40">
         Nothing here is a setting. Each slider is a constant or an exponent inside a
         real equation in the solver. Change one and the world reorganises around it.
       </p>
+      <div class="mt-2 flex gap-2">
+        <UButton
+          size="xs"
+          color="neutral"
+          variant="soft"
+          :aria-pressed="lawView === 'all'"
+          @click="lawView = 'all'"
+        >
+          All laws
+        </UButton>
+        <UButton
+          size="xs"
+          color="neutral"
+          variant="soft"
+          :aria-pressed="lawView === 'life'"
+          @click="lawView = 'life'"
+        >
+          Life parameters
+        </UButton>
+      </div>
+      <UButton
+        v-if="lawView === 'life'"
+        class="mt-2"
+        size="xs"
+        variant="soft"
+        @click="resetLifeLaws"
+      >
+        Reset life defaults
+      </UButton>
     </div>
 
     <div class="min-h-0 flex-1 overflow-y-auto px-3 py-3">
       <section
-        v-for="g in LAW_GROUPS"
+        v-for="g in visibleGroups"
         :key="g"
         class="mb-3"
       >

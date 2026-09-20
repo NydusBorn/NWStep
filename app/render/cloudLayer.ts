@@ -43,7 +43,11 @@ const BILLOW_PERIOD_TICKS = 49152
  * and a dust storm looks like one.
  */
 const CLOUD_OPTICAL_MASS = 0.0005
-const DUST_OPTICAL_MASS = 1
+/* Lowered from 1 when surface drag dropped: the same coefficient sets saltation
+ * stress, so the dust the solver now carries peaks near tau 0.29 rather than 1.5.
+ * The physics kept its contrast (coefficient of variation 0.58-0.61); only the scale
+ * that turns it into opacity needed to follow, or storms fade to nothing. */
+const DUST_OPTICAL_MASS = 0.35
 /** Beyond this a column is opaque anyway, and the attribute stays well conditioned. */
 const MAX_OPTICAL_DEPTH = 8
 

@@ -1,5 +1,11 @@
 # Time, shape and wind
 
+Electrical colonies now share the atmosphere's charge supply with lightning.
+See [colony rules and MVP](colonies.md) for feeding, population, inheritance and
+inspection. When life is enabled or founders have been introduced, date jumps
+always replay the full simulation to preserve ancestry. The approximate Fast jump
+behaviour described below applies only to worlds without life.
+
 The solid planet starts spherical and relaxes toward its equilibrium ellipsoid.
 The default relaxation time is 30 simulated days (63% of a constant deformation
 after 30 days). Rotation and every moon contribute to a symmetric strain tensor;

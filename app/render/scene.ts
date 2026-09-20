@@ -7,6 +7,9 @@ import { PLANET_RADIUS_KM, corotate } from '../sim/units'
 import { interpolateToMesh } from '../sim/icosphere'
 import { WindLayer } from './windLayer'
 import { CloudLayer } from './cloudLayer'
+import { ColonyLayer } from './colonyLayer'
+import { colonyRadius } from '../sim/life'
+import { LightningLayer } from './lightningLayer'
 
 export type FieldMode = 'elevation' | 'temperature' | 'wind' | 'pressure'
 
@@ -147,6 +150,11 @@ export class PlanetScene {
 
   private wind!: WindLayer
   private clouds!: CloudLayer
+  private colonies!: ColonyLayer
+  private lightning!: LightningLayer
+  showLife = true
+  showCreatures = true
+  selectedColony: number | null = null
   private marker!: THREE.Group
   private windArrow!: THREE.Line
 
@@ -204,6 +212,8 @@ export class PlanetScene {
     this.buildBodies()
     this.wind = new WindLayer(this.figureGroup, world)
     this.clouds = new CloudLayer(this.figureGroup, world, 1.09)
+    this.colonies = new ColonyLayer(this.figureGroup, world)
+    this.lightning = new LightningLayer(this.figureGroup, world)
     this.buildMarker()
     this.applyFigure()
 
@@ -478,6 +488,28 @@ export class PlanetScene {
   }
 
   /** Raycast a normalised device coordinate onto the planet; returns a sim cell. */
+  pickColony(ndcX: number, ndcY: number): number | null {
+    if (!this.showLife) return null
+    this.scene.updateMatrixWorld(true)
+    const ray = new THREE.Raycaster()
+    ray.setFromCamera(new THREE.Vector2(ndcX, ndcY), this.camera)
+    const localRay = ray.ray.clone().applyMatrix4(this.figureGroup.matrixWorld.clone().invert())
+    const hit = localRay.intersectSphere(new THREE.Sphere(new THREE.Vector3(), this.maxRadius + 0.045), new THREE.Vector3())
+    if (!hit) return null
+    const worldHit = hit.clone().applyMatrix4(this.figureGroup.matrixWorld)
+    const terrainHit = ray.intersectObject(this.planet, false)[0]
+    if (terrainHit && terrainHit.distance < ray.ray.origin.distanceTo(worldHit) - 0.001) return null
+    hit.normalize()
+    let best: number | null = null, bestDistance = Infinity
+    for (const c of this.world.life.colonies) {
+      const distance = hit.distanceTo(new THREE.Vector3(...c.position))
+      if (distance <= colonyRadius(c) * 1.12 && distance < bestDistance) {
+        best = c.id; bestDistance = distance
+      }
+    }
+    return best
+  }
+
   pick(ndcX: number, ndcY: number): number | null {
     const ray = new THREE.Raycaster()
     ray.setFromCamera(new THREE.Vector2(ndcX, ndcY), this.camera)
@@ -563,11 +595,15 @@ export class PlanetScene {
     this.wind.update(dtFrames, animateWeather, this.camera.position.distanceTo(this.controls.target) / this.maxRadius, this.camera)
     this.clouds.visible = this.showClouds
     this.clouds.update(animateWeather ? dtFrames : 0, [sx, sy, sz])
+    this.colonies.update(this.maxRadius + 0.045, this.showLife, this.selectedColony, this.showCreatures)
+    this.lightning.update(this.maxRadius + 0.048)
     this.renderer.render(this.scene, this.camera)
   }
 
   dispose(): void {
     this.clouds.dispose()
+    this.colonies.dispose()
+    this.lightning.dispose()
     this.wind.dispose()
     this.controls.dispose()
     this.renderer.dispose()
