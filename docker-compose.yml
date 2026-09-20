@@ -1,0 +1,17 @@
+services:
+  sim:
+    build: .
+    container_name: nwstep-sim
+    ports:
+      - "3000:3000"
+    environment:
+      # Windows bind mounts do not emit inotify events, so Vite must poll
+      CHOKIDAR_USEPOLLING: "true"
+      NUXT_TELEMETRY_DISABLED: "1"
+    volumes:
+      # whole project is live-editable...
+      - .:/srv/app
+      # ...except these, which stay inside the container: node_modules comes from
+      # the image's install, and .nuxt is write-heavy and slow over a bind mount
+      - /srv/app/node_modules
+      - /srv/app/.nuxt
