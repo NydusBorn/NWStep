@@ -1,12 +1,14 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useSim } from '../composables/useSim'
+import { planetMass, planetRadiusKm, stellarFlux, yearTicks } from '../sim/units'
 
-const { figure, laws } = useSim()
+const { figure, laws, world, tick } = useSim()
 
 const rows = computed(() => {
   const f = figure.value
   if (!f) return []
+  void tick.value
   return [
     { k: 'Flattening  f', v: f.flatteningInverse > 9999 ? 'sphere' : `1 / ${f.flatteningInverse.toFixed(0)}`, accent: true },
     { k: 'Polar bulge', v: `${f.bulgeKm.toFixed(1)} km`, accent: true },
@@ -15,6 +17,13 @@ const rows = computed(() => {
     { k: 'Equatorial R', v: `${f.equatorialKm.toFixed(0)} km` },
     { k: 'Polar R', v: `${f.polarKm.toFixed(0)} km` },
     { k: 'Surface gravity', v: `${f.gravity.toFixed(2)} m/s²` },
+    { k: 'Planet mass', v: `${planetMass(laws).toExponential(2)} kg` },
+    { k: 'Received stellar flux', v: `${stellarFlux(laws).toFixed(0)} W/m²` },
+    { k: 'Year length', v: `${(yearTicks(laws) / laws.rotationPeriod!).toFixed(1)} days` },
+    ...(world.value?.bodies ?? []).map(body => ({
+      k: `${body.name} distance`,
+      v: `${(Math.hypot(...body.pos) * planetRadiusKm(laws)).toFixed(0)} km`
+    })),
     {
       k: 'Hill separation Δ',
       v: Number.isFinite(f.hill) ? f.hill.toFixed(2) : '—',

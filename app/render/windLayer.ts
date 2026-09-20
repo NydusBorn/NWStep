@@ -3,7 +3,7 @@ import { LineSegments2 } from 'three/examples/jsm/lines/LineSegments2.js'
 import { LineSegmentsGeometry } from 'three/examples/jsm/lines/LineSegmentsGeometry.js'
 import { LineMaterial } from 'three/examples/jsm/lines/LineMaterial.js'
 import type { World } from '../sim/world'
-import { PLANET_RADIUS_KM } from '../sim/units'
+import { planetRadiusKm } from '../sim/units'
 
 /** Persistent short streamlines. Seeds and arrow identities never change when
  * neighbouring lines cross. Arrow tips interpolate continuously along each line;
@@ -140,7 +140,7 @@ export class WindLayer {
     this.opaqueRadius = Infinity
     for (let v = 0; v < mesh.count; v++) {
       const i = mesh.owner[v]!
-      const r = 1 + this.world.terrain.elev[v]! * exaggeration / PLANET_RADIUS_KM
+      const r = 1 + this.world.terrain.elev[v]! * exaggeration / planetRadiusKm(this.world.laws)
       local[i] = Math.max(local[i]!, r)
       this.opaqueRadius = Math.min(this.opaqueRadius, r)
     }

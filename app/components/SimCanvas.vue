@@ -9,7 +9,7 @@ import { useSim } from '../composables/useSim'
 import FpsControl from './FpsControl.vue'
 
 const {
-  world, tick, paused, speed, mode, exaggeration, figureExaggeration, showWind, showClouds, fullbright,
+  world, laws, tick, paused, speed, mode, exaggeration, figureExaggeration, showWind, showClouds, fullbright,
   maxFps, renderScale, displayHz, gpuName,
   selectedCell, unstable, fps, tps, meanTemp, maxWind, terrainVersion,
   seekTarget, seekProgress, fastSeek, rewindLimit, notice,
@@ -73,9 +73,6 @@ const limiter = new FrameLimiter()
 let fpsAcc = 0
 let tickAcc = 0
 let secAcc = 0
-/** Both start due, so the first frame paints a field and a readout rather than a gap. */
-let fieldAcc = FIELD_REFRESH_MS
-let readoutAcc = READOUT_REFRESH_MS
 let stepAcc = 0
 
 /** Simulation ticks per second of wall clock at speed x1. Fixed, so the world
@@ -88,6 +85,9 @@ const TICK_HZ = 60
  *  lagged the simulation for a reason no setting in the app explained. */
 const FIELD_REFRESH_MS = 66
 const READOUT_REFRESH_MS = 200
+/** Both start due, so the first frame paints a field and a readout rather than a gap. */
+let fieldAcc = FIELD_REFRESH_MS
+let readoutAcc = READOUT_REFRESH_MS
 /** How much of the DISPLAY's frame interval the solver may occupy, once the measured
  *  cost of drawing has been taken out of it. Budgeting against the interval rather
  *  than a fixed per-frame constant is what keeps the world's pace off the frame rate:
@@ -236,7 +236,7 @@ function loop(now: number) {
       refreshReading()
       if (selectedCell.value !== null) scene.setMarker(selectedCell.value)
       meanTemp.value = w.air.meanTemp
-      maxWind.value = toMetresPerSecond(w.air.maxSpeed)
+      maxWind.value = toMetresPerSecond(w.air.maxSpeed, w.laws)
       windStreams.value = scene.windStreamCount
     }
     const drawStart = performance.now()
@@ -299,6 +299,13 @@ onBeforeUnmount(() => {
 })
 
 watch(world, () => buildScene())
+watch(() => laws.planetRadiusKm, (radius, previous) => {
+  if (!scene || !radius || !previous) return
+  // Keep the camera's physical distance when the reference planet radius changes.
+  scene.camera.position.multiplyScalar(previous / radius)
+  scene.controls.target.multiplyScalar(previous / radius)
+  scene.controls.update()
+})
 watch(terrainVersion, () => {
   scene?.rebuildTerrainGeometry()
   scene?.refreshField()

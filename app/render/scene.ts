@@ -3,7 +3,7 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import type { World } from '../sim/world'
 import { refreshFigureOffsets } from '../sim/world'
 import { sunDirection } from '../sim/air'
-import { PLANET_RADIUS_KM, corotate } from '../sim/units'
+import { planetRadiusKm, corotate } from '../sim/units'
 import { interpolateToMesh } from '../sim/icosphere'
 import { WindLayer } from './windLayer'
 import { CloudLayer } from './cloudLayer'
@@ -248,7 +248,7 @@ export class PlanetScene {
     const elev = this.world.terrain.elev
     const pos = this.planetGeo.getAttribute('position') as THREE.BufferAttribute
     const arr = pos.array as Float32Array
-    const k = this.exaggeration / PLANET_RADIUS_KM
+    const k = this.exaggeration / planetRadiusKm(this.world.laws)
     let maxR = 0
     let sumR = 0
     for (let v = 0; v < mesh.count; v++) {
@@ -449,7 +449,7 @@ export class PlanetScene {
   setMarker(cell: number | null): void {
     if (cell === null) { this.marker.visible = false; return }
     const { grid } = this.world.sphere
-    const r = 1 + (this.world.terrain.elevSim[cell]! * this.exaggeration) / PLANET_RADIUS_KM + 0.004
+    const r = 1 + (this.world.terrain.elevSim[cell]! * this.exaggeration) / planetRadiusKm(this.world.laws) + 0.004
     const px = grid.pos[cell * 3]!, py = grid.pos[cell * 3 + 1]!, pz = grid.pos[cell * 3 + 2]!
     this.marker.position.set(px * r, py * r, pz * r)
     this.marker.lookAt(0, 0, 0)
@@ -543,7 +543,8 @@ export class PlanetScene {
     this.planetMat.uniforms.uSunDir!.value.set(sx, sy, sz)
     this.atmoMat.uniforms.uSunDir!.value.set(sx, sy, sz)
     this.sunLight.position.set(sx * 10, sy * 10, sz * 10)
-    this.starMesh.position.set(sx * STAR_DISTANCE, sy * STAR_DISTANCE, sz * STAR_DISTANCE)
+    const starDistance = STAR_DISTANCE * this.world.laws.starDistance!
+    this.starMesh.position.set(sx * starDistance, sy * starDistance, sz * starDistance)
 
     // Apply the slowly evolved solid figure without rebuilding terrain geometry.
     this.applyFigure()

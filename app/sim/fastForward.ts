@@ -1,3 +1,4 @@
+import { stellarFlux } from './units'
 import { createAir, stepAir } from './air'
 import { createClouds } from './clouds'
 import { clearHistory, record } from './history'
@@ -37,7 +38,7 @@ function prepareClimate(world: World): void {
     // Include unresolved heat redistribution; a point pole must not be seeded
     // at 3 K merely because its annual-mean direct equinox flux is zero.
     const insol = 0.8 * Math.max(0, Math.cos(grid.lat[i]!)) / Math.PI + 0.2 * 0.25
-    const absorbed = laws.solarConstant! * (1 - laws.albedo!) * insol
+    const absorbed = stellarFlux(laws) * (1 - laws.albedo!) * insol
     const equilibrium = (absorbed / (sigma * (1 - laws.greenhouse!))) ** (1 / laws.emissionExponent!)
     world.air.temp[i] = Math.max(3, Math.min(4000, equilibrium))
   }

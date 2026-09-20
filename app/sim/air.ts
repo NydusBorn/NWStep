@@ -2,7 +2,7 @@ import type { Grid } from './icosphere'
 import type { Terrain } from './terrain'
 import type { Caves } from './caves'
 import type { Laws } from './laws'
-import { DAYS_PER_YEAR, corotate } from './units'
+import { yearTicks, stellarFlux, corotate } from './units'
 import { createUpperAir, type UpperAir } from './upperAir'
 
 /**
@@ -77,15 +77,16 @@ export function createAir(grid: Grid): Air {
 /**
  * Unit vector toward the star, expressed in the planet's co-rotating frame.
  *
- * The star is fixed in inertial space apart from a slow seasonal declination; what
- * makes it sweep the sky is the planet turning underneath it. Building it through the
+ * A prescribed circular orbit supplies annual motion and axial-tilt seasons; the
+ * planet's rotation supplies daily motion. Building it through the
  * same `corotate` the moons use is what keeps the two consistent -- otherwise a
  * tidally locked moon would still appear to race around the sky.
  */
 export function sunDirection(t: number, laws: Laws): [number, number, number] {
-  const yearLength = Math.max(1, laws.rotationPeriod!) * DAYS_PER_YEAR
-  const decl = laws.axialTilt! * Math.sin((2 * Math.PI * t) / yearLength)
-  return corotate(Math.cos(decl), Math.sin(decl), 0, t, laws)
+  const yearLength = yearTicks(laws)
+  const phase = (2 * Math.PI * t) / yearLength
+  return corotate(Math.cos(phase), Math.sin(phase) * Math.sin(laws.axialTilt!),
+    Math.sin(phase) * Math.cos(laws.axialTilt!), t, laws)
 }
 
 /** Temperature actually felt at the surface, i.e. after the lapse rate. */
@@ -124,7 +125,7 @@ export function stepAir(
 
   const [sx, sy, sz] = sunDirection(t, laws)
 
-  const solar = laws.solarConstant!
+  const solar = stellarFlux(laws)
   const albedo = laws.albedo!
   const green = laws.greenhouse!
   const nExp = laws.emissionExponent!

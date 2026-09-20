@@ -21,8 +21,26 @@ export const G_SI = 6.674e-11
 /** A year is this many rotations. plan.md puts the year at about ten days. */
 export const DAYS_PER_YEAR = 10
 
+export function planetRadiusKm(laws: Laws): number {
+  return laws.planetRadiusKm ?? PLANET_RADIUS_KM
+}
+
+export function stellarFlux(laws: Laws): number {
+  return laws.solarConstant! / (laws.starDistance ?? 1) ** 2
+}
+
+/** Circular stellar orbit relative to the original ten-day year, independent of spin. */
+export function yearTicks(laws: Laws): number {
+  return 50.27 * DAYS_PER_YEAR * (laws.starDistance ?? 1) ** 1.5 / Math.sqrt(laws.G!)
+}
+
+/** Legacy orbital calibration; density scales GM/R³, while radius cancels. */
+export function orbitalGravity(laws: Laws): number {
+  return laws.G! * laws.planetDensity! / 3900
+}
+
 export function planetMass(laws: Laws): number {
-  return (4 / 3) * Math.PI * PLANET_RADIUS_M ** 3 * laws.planetDensity!
+  return (4 / 3) * Math.PI * (planetRadiusKm(laws) * 1000) ** 3 * laws.planetDensity!
 }
 
 /** GM, with the player's gravitational multiplier applied. */
@@ -31,7 +49,7 @@ export function gravitationalParameter(laws: Laws): number {
 }
 
 export function surfaceGravity(laws: Laws): number {
-  return gravitationalParameter(laws) / PLANET_RADIUS_M ** 2
+  return gravitationalParameter(laws) / (planetRadiusKm(laws) * 1000) ** 2
 }
 
 /** Angular velocity in rad/s, from the rotation period in ticks. */
@@ -48,12 +66,12 @@ export function angularVelocity(laws: Laws): number {
  */
 export function rotationalParameter(laws: Laws): number {
   const w = angularVelocity(laws)
-  return (w * w * PLANET_RADIUS_M ** 3) / gravitationalParameter(laws)
+  return (w * w * (planetRadiusKm(laws) * 1000) ** 3) / gravitationalParameter(laws)
 }
 
 /** Simulation velocity (planet radii per tick) -> metres per second. */
-export function toMetresPerSecond(v: number): number {
-  return (v * PLANET_RADIUS_M) / TICK_SECONDS
+export function toMetresPerSecond(v: number, laws?: Laws): number {
+  return (v * (laws ? planetRadiusKm(laws) * 1000 : PLANET_RADIUS_M)) / TICK_SECONDS
 }
 
 /**
@@ -87,7 +105,7 @@ export function corotate(
  * T = 2πr/v = 2π·sqrt(r^(p+1)/GM). At p = 2 this is Kepler's third law.
  */
 export function orbitalPeriod(r: number, laws: Laws): number {
-  const gm = laws.G! * 1
+  const gm = orbitalGravity(laws)
   if (gm <= 0) return Infinity
   return 2 * Math.PI * Math.sqrt(r ** (laws.gravityExponent! + 1) / gm)
 }

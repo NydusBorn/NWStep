@@ -1,7 +1,7 @@
 import type { Sphere } from './icosphere'
 import type { Laws } from './laws'
 import { Simplex, mulberry32 } from './noise'
-import { PLANET_RADIUS_KM, rotationalParameter } from './units'
+import { planetRadiusKm, rotationalParameter } from './units'
 
 export interface Terrain {
   /** render-resolution elevation in km */
@@ -103,7 +103,7 @@ export function generateTerrain(sphere: Sphere, laws: Laws, seed: number): Terra
     const r = Math.sqrt(1 - z * z)
     const u = Math.max(1e-3, rnd())
     const ang = Math.min(0.42, 0.022 * u ** -0.5)
-    const diameterKm = 2 * ang * PLANET_RADIUS_KM
+    const diameterKm = 2 * ang * planetRadiusKm(laws)
     craters[i * 5] = r * Math.cos(a)
     craters[i * 5 + 1] = z
     craters[i * 5 + 2] = r * Math.sin(a)

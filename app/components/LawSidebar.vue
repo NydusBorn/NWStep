@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref } from 'vue'
-import { LAW_GROUPS, lawsByGroup } from '../sim/laws'
+import { LAW_GROUPS, lawsByGroup, type LawDef } from '../sim/laws'
 import { tidalLockPeriod } from '../sim/world'
 import { useSim } from '../composables/useSim'
 
@@ -23,6 +23,13 @@ function fmt(v: number, step: number): string {
   const dp = step >= 1 ? 0 : step >= 0.1 ? 1 : step >= 0.01 ? 2 : 3
   return v.toFixed(dp)
 }
+
+function setSystemValue(def: LawDef, event: Event) {
+  const input = event.target as HTMLInputElement
+  const value = input.valueAsNumber
+  if (Number.isFinite(value)) laws[def.key] = Math.max(def.min, Math.min(def.max, value))
+  input.value = String(laws[def.key])
+}
 </script>
 
 <template>
@@ -34,8 +41,8 @@ function fmt(v: number, step: number): string {
         </div>
       </div>
       <p class="mt-1 text-[11px] leading-relaxed text-white/40">
-        Nothing here is a setting. Each slider is a constant or an exponent inside a
-        real equation in the solver. Change one and the world reorganises around it.
+        Set the size and orbits of the system, then change the physical laws.
+        System distances and the law sliders affect the simulation itself.
       </p>
     </div>
 
@@ -68,7 +75,7 @@ function fmt(v: number, step: number): string {
               <UButton
                 color="neutral"
                 variant="ghost"
-                class="text-left text-[12px] text-white/80 hover:text-white"
+                class="min-w-0 whitespace-normal p-0 text-left text-[12px] text-white/80 hover:text-white"
                 @click="expanded = expanded === d.key ? null : d.key"
               >
                 {{ d.label }}
@@ -93,6 +100,18 @@ function fmt(v: number, step: number): string {
               :step="d.step"
               class="mt-2 w-full"
             />
+            <UInput
+              v-if="g === 'System'"
+              :model-value="laws[d.key]"
+              type="number"
+              :min="d.min"
+              :max="d.max"
+              :step="d.step"
+              :aria-label="`${d.label} value`"
+              size="xs"
+              class="mt-2 w-full"
+              @change="setSystemValue(d, $event)"
+            />
 
             <p
               v-if="expanded === d.key"
@@ -105,6 +124,10 @@ function fmt(v: number, step: number): string {
                 v-if="d.rebuildsTerrain"
                 class="text-[10px] text-amber-400/50"
               >rebuilds terrain</span>
+              <span
+                v-if="d.relaunchesOrbits"
+                class="text-[10px] text-amber-400/70"
+              >relaunches moons</span>
               <UButton
                 v-if="d.key === 'rotationPeriod'"
                 color="neutral"

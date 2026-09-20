@@ -441,3 +441,57 @@ test('precipitation is density-thresholded, so cloud size decides cloud lifetime
   // It must stop once it has rained back down to the threshold, not run to zero.
   assert.ok(c.cloud[200] >= qc * 0.9, `precipitation must stall at the threshold, left ${c.cloud[200]}`)
 })
+
+test('planet radius consistently scales mass, gravity, wind units and tides', () => {
+  const { planetMass, surfaceGravity, rotationalParameter, toMetresPerSecond } = require('../app/sim/units.ts')
+  const { initialBodies } = require('../app/sim/world.ts')
+  const base = defaultLaws()
+  const large = { ...base, planetRadiusKm: 12000 }
+  assert.equal(planetMass(large) / planetMass(base), 8)
+  assert.equal(surfaceGravity(large) / surfaceGravity(base), 2)
+  assert.equal(toMetresPerSecond(1, large) / toMetresPerSecond(1, base), 2)
+  assert.ok(Math.abs(rotationalParameter(large) - rotationalParameter(base)) < 1e-12)
+  const smallFigure = computeFigure(initialBodies(base), base, 0)
+  const largeFigure = computeFigure(initialBodies(large), large, 0)
+  assert.equal(largeFigure.peakTideKm / smallFigure.peakTideKm, 2)
+  assert.equal(largeFigure.equatorialKm, 12000)
+  const strain = equilibriumStrain(largeFigure)
+  assert.ok(Math.abs(strainOffsetKm(strain, 0, 1, 0, 12000) - figureOffsetKm(largeFigure, 0, 1, 0)) < 1e-9)
+})
+
+test('configured moon orbits relaunch at the requested radii and inclinations', () => {
+  const { initialBodies, tidalLockPeriod, resetOrbits } = require('../app/sim/world.ts')
+  const laws = { ...defaultLaws(), innerOrbitRadius: 8, outerOrbitRadius: 30, innerOrbitInclination: 90, outerOrbitInclination: 180 }
+  const bodies = initialBodies(laws)
+  assert.equal(Math.hypot(...bodies[0].pos), 8)
+  assert.equal(Math.hypot(...bodies[1].pos), 30)
+  assert.ok(bodies[0].vel[1] > 0 && Math.abs(bodies[0].vel[2]) < 1e-12)
+  assert.ok(bodies[1].vel[2] < 0 && Math.abs(bodies[1].vel[1]) < 1e-12)
+  assert.equal(tidalLockPeriod(laws), orbitalPeriod(8, laws))
+  const w = createWorld()
+  stepGlobals(w)
+  w.laws = laws
+  resetOrbits(w)
+  assert.deepEqual(w.bodies, bodies)
+  const density = { ...laws, planetDensity: laws.planetDensity * 2 }
+  assert.ok(Math.abs(orbitalPeriod(8, density) / orbitalPeriod(8, laws) - 1 / Math.sqrt(2)) < 1e-12)
+})
+
+test('stellar distance changes flux, year and heating; old settings get safe defaults', () => {
+  const { stellarFlux, yearTicks } = require('../app/sim/units.ts')
+  const { clampLaws } = require('../app/sim/laws.ts')
+  const base = defaultLaws()
+  const far = { ...base, starDistance: 2 }
+  assert.equal(stellarFlux(far), stellarFlux(base) / 4)
+  assert.ok(Math.abs(yearTicks(far) / yearTicks(base) - Math.sqrt(8)) < 1e-12)
+  const nearWorld = createWorld(123, base)
+  const farWorld = createWorld(123, far)
+  stepWorld(nearWorld, false)
+  stepWorld(farWorld, false)
+  assert.ok(nearWorld.air.meanTemp > farWorld.air.meanTemp)
+  const old = { ...base }
+  for (const key of ['planetRadiusKm', 'starDistance', 'innerOrbitRadius', 'outerOrbitRadius', 'innerOrbitInclination', 'outerOrbitInclination']) delete old[key]
+  assert.deepEqual(clampLaws(old), base)
+  assert.equal(clampLaws({ ...base, planetRadiusKm: -1 }).planetRadiusKm, 2000)
+  assert.equal(clampLaws({ ...base, starDistance: Infinity }).starDistance, 1)
+})

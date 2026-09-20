@@ -1,6 +1,6 @@
 import type { Laws } from './laws'
 import type { Body } from './world'
-import { PLANET_RADIUS_KM, corotate, rotationalParameter } from './units'
+import { PLANET_RADIUS_KM, planetRadiusKm, corotate, rotationalParameter } from './units'
 
 /**
  * THE FIGURE OF THE PLANET.
@@ -33,6 +33,7 @@ import { PLANET_RADIUS_KM, corotate, rotationalParameter } from './units'
  */
 
 export interface Figure {
+  radiusKm: number
   /** (a − c)/a, rotational flattening */
   flattening: number
   /** rotational parameter m = Ω²R³/GM */
@@ -53,7 +54,7 @@ export function equilibriumStrain(fig: Figure, out: Float64Array = new Float64Ar
   out.fill(0)
   out[1] = -fig.flattening
   for (const tide of fig.tides) {
-    const a = tide.amplitudeKm / PLANET_RADIUS_KM
+    const a = tide.amplitudeKm / fig.radiusKm
     const [x, y, z] = tide.dir
     out[0] = out[0]! + (a * (1.5 * x * x - 0.5))
     out[1] = out[1]! + (a * (1.5 * y * y - 0.5))
@@ -73,12 +74,13 @@ export function relaxStrain(strain: Float64Array, target: Float64Array, laws: La
   for (let i = 0; i < 6; i++) strain[i] = strain[i]! + ((target[i]! - strain[i]!) * alpha)
 }
 
-export function strainOffsetKm(s: Float64Array, x: number, y: number, z: number): number {
-  return PLANET_RADIUS_KM * (s[0]! * x * x + s[1]! * y * y + s[2]! * z * z
+export function strainOffsetKm(s: Float64Array, x: number, y: number, z: number, radiusKm = PLANET_RADIUS_KM): number {
+  return radiusKm * (s[0]! * x * x + s[1]! * y * y + s[2]! * z * z
     + 2 * (s[3]! * x * y + s[4]! * x * z + s[5]! * y * z))
 }
 
 export function computeFigure(bodies: Body[], laws: Laws, tick: number): Figure {
+  const radiusKm = planetRadiusKm(laws)
   const h2 = laws.loveNumberH2!
   const p = laws.gravityExponent!
   const m = rotationalParameter(laws)
@@ -94,7 +96,7 @@ export function computeFigure(bodies: Body[], laws: Laws, tick: number): Figure 
     const d = Math.hypot(b.pos[0], b.pos[1], b.pos[2])
     if (!Number.isFinite(d) || d < 1e-6) continue
     // distances are already in planet radii, masses in planet masses
-    const amplitudeKm = h2 * b.mass * tidalOrder * d ** (-(p + 1)) * PLANET_RADIUS_KM
+    const amplitudeKm = h2 * b.mass * tidalOrder * d ** (-(p + 1)) * radiusKm
     if (!Number.isFinite(amplitudeKm)) continue
     // the bulge must be expressed where the terrain is, i.e. co-rotating
     const dir = corotate(b.pos[0] / d, b.pos[1] / d, b.pos[2] / d, tick, laws)
@@ -106,13 +108,14 @@ export function computeFigure(bodies: Body[], laws: Laws, tick: number): Figure 
   }
 
   return {
+    radiusKm,
     flattening,
     rotParam: m,
     tides,
     peakTideKm: peak,
     peakTideDir: peakDir,
-    equatorialKm: PLANET_RADIUS_KM,
-    polarKm: PLANET_RADIUS_KM * (1 - flattening)
+    equatorialKm: radiusKm,
+    polarKm: radiusKm * (1 - flattening)
   }
 }
 
@@ -127,7 +130,7 @@ export function figureOffsetKm(
   z: number
 ): number {
   // rotational: r = R(1 − f·sin²φ), and sin φ is just the y component
-  let d = -fig.flattening * PLANET_RADIUS_KM * y * y
+  let d = -fig.flattening * fig.radiusKm * y * y
 
   // tidal: ζ·P₂(cos θ) with P₂(u) = (3u² − 1)/2, prolate toward each body
   for (const t of fig.tides) {
