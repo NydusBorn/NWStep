@@ -62,3 +62,22 @@ Check out the [deployment documentation](https://nuxt.com/docs/getting-started/d
 ## Renovate integration
 
 Install [Renovate GitHub app](https://github.com/apps/renovate/installations/select_target) on your repository and you are good to go.
+
+## Simulation controls and verification
+
+The interface keeps main's inset sidebar, rounded canvas workspace and playback/import/export toolbar, with the simulation from `system-mvp`. Nuxt UI provides the sidebar, buttons, sliders, day input, checkbox and status alerts. On small screens the laws open in a drawer.
+
+Use Resume/Pause and the speed buttons to control time; negative speeds replay recorded history. Go to day can rebuild earlier history, and Fast jump approximates destination weather for long forward jumps. The sidebar edits physical laws, regenerates terrain and resets or relaunches the system. Canvas controls select fields, streamlines, cloud highlighting and fullbright; click the planet to inspect a cell.
+
+Settings exports contain the seed and laws. Timestep exports additionally contain the tick. Importing a timestep reconstructs the world and replays to that tick under the exported laws; it does not restore a complete snapshot or a history of law edits. Disable Fast jump for full weather replay.
+
+Run `pnpm test`, `pnpm lint`, `pnpm typecheck` and `pnpm build` for checks. For browser checks:
+
+```bash
+pnpm exec playwright install chromium
+pnpm dev --port 3123
+# In another terminal:
+node scripts/verify.mjs http://localhost:3123/
+```
+
+The script checks rendering and interactive controls, captures desktop and mobile screenshots in `.shots/`, and fails on browser errors. To use installed Edge instead of downloaded Chromium, set `PLAYWRIGHT_CHANNEL=msedge` (PowerShell: `$env:PLAYWRIGHT_CHANNEL = 'msedge'`).
