@@ -171,17 +171,19 @@ test('cloud opacity is local and a paused cloud layer is unchanged', () => {
   w.tick++
   layer.update(0, [1, 0, 0])
   assert.equal(layer.smCloud[0], local)
-  const before = { time: layer.time, cloud: layer.smCloud.slice(), dust: layer.smDust.slice(), flow: layer.flow.slice(), flash: layer.flash }
+  const evolve = () => layer.mat.uniforms.uEvolve.value.clone()
+  const before = { time: layer.time, cloud: layer.smCloud.slice(), dust: layer.smDust.slice(), evolve: evolve(), flash: layer.flash }
   for (let i = 0; i < 10; i++) layer.update(0, [1, 0, 0])
-  assert.deepEqual({ time: layer.time, cloud: layer.smCloud, dust: layer.smDust, flow: layer.flow, flash: layer.flash }, before)
-  w.air.windU.fill(0.01)
+  assert.deepEqual({ time: layer.time, cloud: layer.smCloud, dust: layer.smDust, evolve: evolve(), flash: layer.flash }, before)
+  // The detail volume drifts with simulation time, so the pattern billows...
   w.tick++
   layer.update(1, [1, 0, 0])
-  assert.ok(layer.flow.some(x => Math.abs(x) > 0), 'cloud detail must move with wind')
-  const flow = layer.flow.slice()
+  assert.ok(evolve().distanceTo(before.evolve) > 0, 'detail must evolve with simulation time')
+  // ...but on a closed loop, so however long the app runs it never reaches
+  // coordinates float32 value noise cannot resolve, and never needs a reset.
   w.tick += 100000
   layer.update(1, [1, 0, 0])
-  assert.deepEqual(layer.flow, flow, 'texture coordinates must not accumulate lifetime shear')
+  assert.ok(evolve().length() < 10, `detail coordinates grew to ${evolve().length()}`)
   assert.equal(layer.time, w.tick, 'detail must follow simulation time')
   layer.dispose()
 })
@@ -216,12 +218,12 @@ test('dust sources exhaust, travel, settle and conserve the surface plus airborn
   for (let t = 0; t < 40; t++) stepClouds(g, w.terrain, w.air, c, w.laws, 1, t)
   assert.ok(c.surfaceDust[100] < 0.1, 'source must deplete instead of creating an infinite stationary plume')
   assert.ok(c.dust.some((v, i) => i !== 100 && v > 0.01))
-  assert.ok(Math.abs(sum(c.surfaceDust) + sum(c.dust) - 3) < 1e-4)
+  assert.ok(Math.abs(sum(c.surfaceDust) + sum(c.dust) + sum(c.dustAloft) - 3) < 1e-4)
   const airborne = sum(c.dust)
   w.laws.dustLifting = 0
   for (let t = 0; t < 300; t++) stepClouds(g, w.terrain, w.air, c, w.laws, 1, t)
   assert.ok(sum(c.dust) < airborne * 0.45, 'cloud must dissipate when lifting stops')
-  assert.ok(Math.abs(sum(c.surfaceDust) + sum(c.dust) - 3) < 1e-4)
+  assert.ok(Math.abs(sum(c.surfaceDust) + sum(c.dust) + sum(c.dustAloft) - 3) < 1e-4)
 })
 
 test('cloud and dust mass is transported away from its source', () => {
@@ -304,4 +306,138 @@ test('pausing uses the current wind field through zoom changes after a calm fram
   }
   assert.equal(w.tick, 1, 'Camera changes must not advance the simulation')
   layer.dispose()
+})
+
+test('pausing settles the wind field instead of snapping it', () => {
+  const w = createWorld()
+  const layer = new WindLayer(new THREE.Group(), w)
+  layer.setTerrain(5)
+  for (let t = 0; t < 60; t++) {
+    stepWorld(w, false)
+    layer.update(1, true, 3)
+  }
+  // Force a gap between the displayed field and the solver's, as playback speed does.
+  w.air.windU.fill(0.05)
+  w.air.windV.fill(-0.03)
+  const before = Float32Array.from(layer.field)
+  layer.update(1, false, 3)
+
+  const g = w.sphere.grid
+  const targetAt = j => g.east[j] * w.air.windU[(j / 3) | 0] + g.north[j] * w.air.windV[(j / 3) | 0]
+  let moved = 0, gap = 0
+  for (let j = 0; j < g.count * 3; j++) {
+    moved = Math.max(moved, Math.abs(layer.field[j] - before[j]))
+    gap = Math.max(gap, Math.abs(targetAt(j) - before[j]))
+  }
+  assert.ok(gap > 1e-3, 'the test must create a gap worth crossing')
+  // The whole visible bug: one paused frame used to cross 100% of it at once and
+  // re-threw every streamline.
+  assert.ok(moved < gap * 0.3, `one paused frame crossed ${((moved / gap) * 100).toFixed(0)}% of the gap`)
+
+  // It must still arrive, or a later zoom traces a stale near-calm field.
+  layer.update(1000, false, 3)
+  let residual = 0
+  for (let j = 0; j < g.count * 3; j++) residual = Math.max(residual, Math.abs(layer.field[j] - targetAt(j)))
+  assert.ok(residual < gap * 0.01, `settled field is still ${residual.toExponential(2)} from the solver's`)
+  layer.dispose()
+})
+
+test('sub-threshold cells still lift, so calm ground is not a one-way dust trap', () => {
+  const w = createWorld(), g = w.sphere.grid, c = w.clouds
+  // Put every cell well under the saltation threshold, worst-case roughness included.
+  let maxRough = 0
+  for (const r of w.terrain.roughness) if (r > maxRough) maxRough = r
+  const calm = (w.laws.dustThreshold / Math.sqrt(w.laws.dragCoefficient * (1 + maxRough))) * 0.5
+  c.surfaceDust.fill(1)
+  c.dust.fill(0)
+  w.air.windU.fill(calm)
+  w.air.windV.fill(0)
+  w.air.press.fill(1000)
+  const sum = f => f.reduce((s, x) => s + x, 0)
+
+  // A hard cutoff emits nothing at all here, which is what made these cells sinks:
+  // settling still ran in every one of them, so dust could only ever arrive.
+  w.laws.dustGustiness = 0
+  for (let t = 0; t < 40; t++) stepClouds(g, w.terrain, w.air, c, w.laws, 1, t)
+  assert.equal(sum(c.dust), 0, 'a hard threshold must emit nothing below itself')
+
+  // Gusts put the upper tail of the distribution over the threshold even though the
+  // cell mean is under it, so the ground can give dust back.
+  w.laws.dustGustiness = 0.4
+  for (let t = 0; t < 40; t++) stepClouds(g, w.terrain, w.air, c, w.laws, 1, t)
+  assert.ok(sum(c.dust) > 0, 'gusts must lift from sub-threshold cells')
+  // The tail is a tail, not a new source. At half the threshold it raises about 1% of
+  // the available dust over these 40 ticks, where a storm strips its cells almost bare.
+  assert.ok(sum(c.dust) < g.count * 0.03, `sub-threshold lifting must stay weak, got ${sum(c.dust)}`)
+  // ...and it is still only an exchange with the surface.
+  assert.ok(Math.abs(sum(c.dust) + sum(c.surfaceDust) - g.count) < 1e-3, 'dust must stay conserved')
+})
+
+test('rising air lofts tracers, sinking air returns them, and the column is conserved', () => {
+  const w = createWorld(), g = w.sphere.grid, c = w.clouds
+  const sum = f => f.reduce((s, x) => s + x, 0)
+  const column = () => sum(c.dust) + sum(c.dustAloft) + sum(c.surfaceDust)
+  w.laws.dustLifting = 0 // isolate vertical transport from emission
+  c.surfaceDust.fill(0)
+  c.dust.fill(0)
+  c.dustAloft.fill(0)
+  c.dust[100] = 1
+  w.air.press.fill(1000)
+
+  // Rising everywhere: the surface layer must be able to vent upward. Without this
+  // a convergence zone can only fill, which is what pinned everything at the equator.
+  w.air.upper.exchange.fill(0.05)
+  for (let t = 0; t < 10; t++) stepClouds(g, w.terrain, w.air, c, w.laws, 1, t)
+  assert.ok(sum(c.dustAloft) > 0, 'rising air must carry dust into the upper layer')
+  assert.ok(Math.abs(column() - 1) < 1e-4, `lofting must conserve the column, got ${column()}`)
+
+  // Sinking brings it back, so the exchange is a circulation and not a one-way leak.
+  const lofted = sum(c.dustAloft)
+  w.air.upper.exchange.fill(-0.05)
+  // 20 ticks at ~4.9% of the remaining load per tick leaves well under half.
+  for (let t = 0; t < 20; t++) stepClouds(g, w.terrain, w.air, c, w.laws, 1, t)
+  assert.ok(sum(c.dustAloft) < lofted * 0.5,
+    `sinking air must entrain dust back down, ${(sum(c.dustAloft) / lofted * 100).toFixed(0)}% left aloft`)
+  assert.ok(Math.abs(column() - 1) < 1e-4, `subsidence must conserve the column, got ${column()}`)
+
+  // A sealed layer is still available, and is exactly the old behaviour.
+  w.laws.tracerLofting = 0
+  c.dust.fill(0)
+  c.dustAloft.fill(0)
+  c.surfaceDust.fill(0)
+  c.dust[100] = 1
+  w.air.upper.exchange.fill(0.05)
+  for (let t = 0; t < 10; t++) stepClouds(g, w.terrain, w.air, c, w.laws, 1, t)
+  assert.equal(sum(c.dustAloft), 0, 'zero lofting must seal the surface layer')
+})
+
+test('precipitation is density-thresholded, so cloud size decides cloud lifetime', () => {
+  const w = createWorld(), g = w.sphere.grid, c = w.clouds
+  const qc = w.laws.cloudAutoconversion
+  assert.ok(qc > 0, 'the default must have a threshold at all')
+  // Two cells: one thin cloud below the threshold, one dense one well above it.
+  c.cloud.fill(0)
+  c.cloudAloft.fill(0)
+  c.vapor.fill(0)
+  c.frost.fill(0)
+  c.cloud[100] = qc * 0.5
+  c.cloud[200] = qc * 4
+  w.air.press.fill(1000)
+  // Isolate precipitation: evaporation would also thin both clouds and is a
+  // separate mechanism with its own test above.
+  w.laws.cloudDecay = 0
+  const thin0 = c.cloud[100], dense0 = c.cloud[200]
+  for (let t = 0; t < 30; t++) stepClouds(g, w.terrain, w.air, c, w.laws, 1, t)
+
+  // The thin cloud cannot precipitate at all: its droplets never grow enough.
+  assert.equal(c.frost[100], 0, 'a cloud below the threshold must not precipitate')
+  assert.equal(c.cloud[100], thin0, 'and so it is still entirely there')
+  // The dense one rains, and loses a larger FRACTION than the thin one - which is
+  // exactly what a rate linear in cloud mass could never produce.
+  assert.ok(c.frost[200] > 0, 'a cloud above the threshold must precipitate')
+  const thinLost = 1 - c.cloud[100] / thin0
+  const denseLost = 1 - c.cloud[200] / dense0
+  assert.ok(denseLost > thinLost, `dense cloud must clear faster: ${denseLost.toFixed(3)} vs ${thinLost.toFixed(3)}`)
+  // It must stop once it has rained back down to the threshold, not run to zero.
+  assert.ok(c.cloud[200] >= qc * 0.9, `precipitation must stall at the threshold, left ${c.cloud[200]}`)
 })

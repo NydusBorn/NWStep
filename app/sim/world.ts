@@ -47,8 +47,8 @@ export interface World {
   paused: boolean
 }
 
-// Weather is resolved on 2,562 cells; the detailed terrain mesh is unchanged.
-export const SIM_LEVEL = 4
+// Weather is resolved on 10,242 cells; the detailed terrain mesh is unchanged.
+export const SIM_LEVEL = 5
 export const RENDER_LEVEL = 7
 const DT = 1
 const TRAIL_MAX = 260
@@ -382,8 +382,8 @@ export function readCell(world: World, i: number): CellReading {
     roughness: terrain.roughness[i]!,
     insolation: insol,
     cavern: world.caves.intensity[i]!,
-    cloud: world.clouds.cloud[i]! / Math.max(1e-9, world.clouds.maxCloud),
-    dust: world.clouds.dust[i]! / Math.max(1e-9, world.clouds.maxDust),
+    cloud: (world.clouds.cloud[i]! + world.clouds.cloudAloft[i]!) / Math.max(1e-9, world.clouds.maxCloud),
+    dust: (world.clouds.dust[i]! + world.clouds.dustAloft[i]!) / Math.max(1e-9, world.clouds.maxDust),
     iceFrac: world.clouds.iceFrac[i]!,
     charge: world.clouds.charge[i]! / Math.max(1e-9, laws.breakdownField!),
     updraft: world.clouds.updraft[i]!,

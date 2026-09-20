@@ -2,33 +2,68 @@ import * as THREE from 'three'
 import type { World } from '../sim/world'
 import { interpolateToMesh } from '../sim/icosphere'
 
-/** The shell displays transported mass. Sub-grid detail uses two renewing flow
- * maps: each travels with local wind for a bounded interval, and renews only at
- * zero weight. Coordinates never accumulate shear over the lifetime of the app.
+/** The shell displays transported mass. Cloud MOTION comes from that mass, which the
+ * solver advects at the true wind speed; the sub-grid noise here only breaks the
+ * 200 km cells into cloud-shaped structure.
+ *
+ * That noise does not chase the wind. It used to: two flow maps warped by local wind,
+ * crossfading as each renewed. Measured against this world it could not work -- one
+ * 16-tick period sheared the pattern through 2.6 feature widths at median wind and 6
+ * at maximum, so the texture smeared and snapped back 3.75 times a second at x1 and
+ * 60 at x16. Bounded shear would have needed a ~2.5-tick period, which is faster
+ * still, and no tick-based period can be slow at high playback speed anyway.
+ *
+ * So the volume is fixed in the planet's rotating frame and drifts on a CLOSED loop
+ * instead. A rigid translation cannot shear, a closed loop never grows coordinates
+ * that float32 noise would lose precision on, and neither ever needs a reset to hide.
  * These are visual details, not extra sources of simulated cloud/dust mass. */
-const CLOUD_OPTICAL_MASS = 0.00005
-const DUST_OPTICAL_MASS = 3
+/** How far the detail volume is carried from the origin. Larger crosses more noise
+ *  features per lap, so the pattern varies more before it repeats; small enough that
+ *  the coordinates stay in the range float32 value noise resolves cleanly. */
+const BILLOW_RADIUS = 8
+/** Ticks per lap. Deliberately slow: roughly one feature every 20 simulated days.
+ *  The perceived motion of a cloud has to come from the MASS, which the solver
+ *  advects at the true wind speed -- at x4 that is about 150 degrees of arc a second,
+ *  plenty to see. A detail pattern that renews on a weather timescale churns 3 times
+ *  a second at that playback rate and drowns the streaming out, which reads as clouds
+ *  boiling in place rather than travelling. Slower here means the mass wins. */
+const BILLOW_PERIOD_TICKS = 49152
+
+/**
+ * Mass giving optical depth 1, per material. These also decide the COLOUR, because
+ * `iceShare` downstream is the ratio between the two opacities -- so they have to be
+ * commensurate with the masses the solver actually produces, or the ratio stops
+ * meaning anything.
+ *
+ * They were 0.00005 and 3, a factor of 60,000 apart, against peak masses of 5.2e-3
+ * cloud and 1.8 dust. Cloud therefore ran 103x over its optical mass and pinned at
+ * opacity 1.000 while dust reached 0.449, so ice won the ratio everywhere: a cell
+ * holding 3,178x more dust than condensate still drew as an ice cloud, and only 21%
+ * of visibly dusty cells came out ochre. Scaled to the real mass ranges it is 81%,
+ * and a dust storm looks like one.
+ */
+const CLOUD_OPTICAL_MASS = 0.0005
+const DUST_OPTICAL_MASS = 1
+/** Beyond this a column is opaque anyway, and the attribute stays well conditioned. */
+const MAX_OPTICAL_DEPTH = 8
 
 const cloudVert = /* glsl */`
 attribute float aCloud;
 attribute float aIce;
 attribute float aDust;
 attribute float aCharge;
-attribute vec3 aFlow;
 varying float vCloud;
 varying float vIce;
 varying float vDust;
 varying float vCharge;
 varying vec3 vObj;
 varying vec3 vView;
-varying vec3 vFlow;
 
 void main() {
   vCloud = aCloud;
   vIce = aIce;
   vDust = aDust;
   vCharge = aCharge;
-  vFlow = aFlow;
   vObj = position;
   vec4 mv = modelViewMatrix * vec4(position, 1.0);
   vView = normalize(-mv.xyz);
@@ -39,7 +74,7 @@ void main() {
 const cloudFrag = /* glsl */`
 precision highp float;
 uniform vec3 uSunDir;
-uniform float uTime;
+uniform vec3 uEvolve;
 uniform float uDetail;
 uniform float uExtinction;
 uniform float uCoverage;
@@ -53,7 +88,6 @@ varying float vDust;
 varying float vCharge;
 varying vec3 vObj;
 varying vec3 vView;
-varying vec3 vFlow;
 
 // --- value noise -----------------------------------------------------------
 float hash(vec3 p) {
@@ -83,22 +117,37 @@ float fbm(vec3 p) {
   return s / 0.875;
 }
 
-float flowNoise(vec3 p, float clock) {
-  float age = mod(clock, 16.0);
-  float generation = floor(clock / 16.0);
-  // A new domain enters at zero weight. It does not snap the visible pattern
-  // back to the same fixed surface texture every cycle.
-  vec3 origin = vec3(7.13, 3.71, 11.17) * mod(generation, 4096.0);
-  vec3 departure = normalize(p - vFlow * age);
-  return fbm(departure * (24.0 * uDetail) + origin);
-}
-
-float density(vec3 p, float base) {
-  if (base <= 0.002) return 0.0;
-  float weight = 1.0 - abs(mod(uTime, 16.0) / 8.0 - 1.0);
-  float n = mix(flowNoise(p, uTime + 8.0), flowNoise(p, uTime), weight);
-  float cut = 0.64 - 0.28 * uCoverage + 0.12 * (1.0 - base);
-  return base * smoothstep(cut, cut + 0.22, n);
+/**
+ * @param tau   optical depth of the whole column, unbounded above
+ * @param cover the same, clamped to 0..1, for deciding where there is sky at all
+ */
+/**
+ * Coverage mask for ONE material.
+ *
+ * Dust and condensate get their own sample. Sharing a single mask -- which is what
+ * this did -- meant they shared an outline: a cell whose ice evaporated kept exactly
+ * the same shape and merely changed hue, so a cloud appeared to lose its colour
+ * rather than clear. With separate samples each material thins and vanishes on its
+ * own, and a fragment is only drawn where something is actually left.
+ *
+ * uEvolve walks the sample volume along a closed loop, so the pattern billows
+ * continuously and identically at any frame rate, and is still exactly where it was
+ * when the simulation is paused.
+ *
+ * @param scale  spatial frequency; dust is sampled coarser because it travels as
+ *               broad sheets where condensate is wispy.
+ * @param offset displaces the domain so the two materials cannot correlate.
+ */
+float mask(vec3 p, float cover, float scale, vec3 offset) {
+  float n = fbm(p * scale + uEvolve + offset);
+  // The LOAD sets how much of the cell is covered; the noise only decides where
+  // inside it the cloud sits. The cut this replaces moved by 0.12 across the entire
+  // range of loads while the noise spanned 1.0, so the drawn shape was essentially
+  // fixed and the simulation only scaled its opacity -- the picture showed THAT
+  // something was there, never how much.
+  float frac = clamp(cover * (0.35 + 1.3 * uCoverage), 0.0, 1.0);
+  float cut = 1.0 - frac;
+  return smoothstep(cut - 0.14, cut + 0.14, n);
 }
 
 // Henyey-Greenstein: the forward peak is what makes a cloud edge glow toward the star
@@ -109,8 +158,13 @@ float hg(float cosT, float g) {
 
 void main() {
   vec3 p = normalize(vObj);
-  float base = min(1.0, vCloud + vDust * 0.75);
-  float d = density(p, base);
+  // vCloud and vDust arrive as optical depths, so these are too, and Beer-Lambert
+  // below turns the total into opacity ONCE. A thin deck is visibly thinner than a
+  // storm, and each material is masked separately so each can clear on its own.
+  float scale = 24.0 * uDetail;
+  float dCloud = vCloud * mask(p, min(1.0, vCloud), scale, vec3(0.0));
+  float dDust = vDust * mask(p, min(1.0, vDust), scale * 0.55, vec3(19.7, 4.3, 11.1));
+  float d = dCloud + dDust * 0.75;
   if (d <= 0.0) discard;
 
   // optical depth through the slab, Beer-Lambert
@@ -128,7 +182,9 @@ void main() {
   lit = mix(pow(lit, 0.7), 1.0, uFullbright);
 
   // ochre where the load is dust, pale where it is condensed ice
-  float iceShare = vCloud / max(1e-4, vCloud + vDust);
+  // Built from the MASKED amounts, so shape and colour agree: where the dust mask
+  // has cleared, the fragment reads as pure condensate rather than a muddied blend.
+  float iceShare = dCloud / max(1e-4, dCloud + dDust * 0.75);
   vec3 dustCol = vec3(0.55, 0.36, 0.27);
   vec3 iceCol  = vec3(0.80, 0.83, 0.88);
   vec3 col = mix(dustCol, iceCol, iceShare * mix(0.45, 1.0, vIce));
@@ -176,8 +232,6 @@ export class CloudLayer {
   private iceAttr: THREE.BufferAttribute
   private dustAttr: THREE.BufferAttribute
   private chargeAttr: THREE.BufferAttribute
-  private flowAttr: THREE.BufferAttribute
-  private flow: Float32Array
   private smCloud: Float32Array
   private smDust: Float32Array
   private smCharge: Float32Array
@@ -203,22 +257,21 @@ export class CloudLayer {
     this.iceAttr = new THREE.BufferAttribute(new Float32Array(mesh.count), 1)
     this.dustAttr = new THREE.BufferAttribute(new Float32Array(mesh.count), 1)
     this.chargeAttr = new THREE.BufferAttribute(new Float32Array(mesh.count), 1)
-    this.flowAttr = new THREE.BufferAttribute(new Float32Array(mesh.count * 3), 3)
-    this.flow = new Float32Array(world.sphere.grid.count * 3)
     geo.setAttribute('aCloud', this.cloudAttr)
     geo.setAttribute('aIce', this.iceAttr)
     geo.setAttribute('aDust', this.dustAttr)
     geo.setAttribute('aCharge', this.chargeAttr)
-    geo.setAttribute('aFlow', this.flowAttr)
 
     this.mat = new THREE.ShaderMaterial({
       vertexShader: cloudVert,
       fragmentShader: cloudFrag,
       uniforms: {
         uSunDir: { value: new THREE.Vector3(1, 0, 0) },
-        uTime: { value: 0 },
+        uEvolve: { value: new THREE.Vector3() },
         uDetail: { value: 0.55 },
-        uExtinction: { value: 2.2 },
+        // Sized so opacity spans its useful range across the optical depths the
+        // solver actually produces, instead of saturating on the first wisp.
+        uExtinction: { value: 0.6 },
         uCoverage: { value: 0.6 },
         uFlash: { value: 0 },
         uFlashPos: { value: new THREE.Vector3(1, 0, 0) },
@@ -262,8 +315,15 @@ export class CloudLayer {
     this.smReady = true
     const chargeScale = 1 / Math.max(1e-9, this.world.laws.breakdownField!)
     for (let i = 0; i < n; i++) {
-      const cl = -Math.expm1(-c.cloud[i]! / CLOUD_OPTICAL_MASS)
-      const du = -Math.expm1(-c.dust[i]! / DUST_OPTICAL_MASS)
+      // Column totals: the deck is seen through, so material that has been lofted is
+      // still in front of the observer. Drawing only the surface layer would make a
+      // storm blink out at the moment it vented upward.
+      // OPTICAL DEPTH, not an opacity. Saturating here and again through
+      // Beer-Lambert in the shader compressed every load into the same flat sheet:
+      // a wisp and a storm both came out at alpha 1. Passing tau through means the
+      // drawn opacity tracks how much material is actually in the column.
+      const cl = Math.min(MAX_OPTICAL_DEPTH, (c.cloud[i]! + c.cloudAloft[i]!) / CLOUD_OPTICAL_MASS)
+      const du = Math.min(MAX_OPTICAL_DEPTH, (c.dust[i]! + c.dustAloft[i]!) / DUST_OPTICAL_MASS)
       this.smCloud[i] = this.smCloud[i]! + ((cl - this.smCloud[i]!) * k)
       this.smDust[i] = this.smDust[i]! + ((du - this.smDust[i]!) * k)
       this.smCharge[i] = this.smCharge[i]! + ((Math.min(1, c.charge[i]! * chargeScale) - this.smCharge[i]!) * k)
@@ -284,15 +344,6 @@ export class CloudLayer {
     this.iceAttr.needsUpdate = true
     this.dustAttr.needsUpdate = true
     this.chargeAttr.needsUpdate = true
-    const flow = this.flowAttr.array as Float32Array
-    for (let v = 0; v < mesh.count; v++) {
-      for (let axis = 0; axis < 3; axis++) {
-        flow[v * 3 + axis] = v < mesh.simCount
-          ? this.flow[v * 3 + axis]!
-          : (flow[mesh.parentA[v]! * 3 + axis]! + flow[mesh.parentB[v]! * 3 + axis]!) * 0.5
-      }
-    }
-    this.flowAttr.needsUpdate = true
   }
 
   private lastWeatherTick = -1
@@ -310,21 +361,16 @@ export class CloudLayer {
     }
     this.time = this.world.tick
     if (tickChanged) {
-      const { grid } = this.world.sphere
-      const { air } = this.world
-      for (let i = 0; i < grid.count; i++) {
-        for (let axis = 0; axis < 3; axis++) {
-          const j = i * 3 + axis
-          const velocity = grid.east[j]! * air.windU[i]! + grid.north[j]! * air.windV[i]!
-          this.flow[j] = velocity
-        }
-      }
-    }
-    if (tickChanged) {
       this.ease(ticks)
       this.writeAttributes()
     }
-    this.mat.uniforms.uTime!.value = this.time
+    // Closed Lissajous loop: continuous, bounded, and frozen whenever the tick is.
+    const theta = (2 * Math.PI * this.time) / BILLOW_PERIOD_TICKS
+    this.mat.uniforms.uEvolve!.value.set(
+      BILLOW_RADIUS * Math.cos(theta),
+      BILLOW_RADIUS * Math.sin(theta),
+      BILLOW_RADIUS * 0.5 * Math.sin(2 * theta)
+    )
     this.mat.uniforms.uSunDir!.value.set(sun[0], sun[1], sun[2])
     this.mat.uniforms.uCoverage!.value = this.world.laws.cloudCoverage!
     this.mat.uniforms.uDetail!.value = this.world.laws.cloudDetail!

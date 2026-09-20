@@ -88,30 +88,41 @@ const TICK_HZ = 60
  *  lagged the simulation for a reason no setting in the app explained. */
 const FIELD_REFRESH_MS = 66
 const READOUT_REFRESH_MS = 200
-/** Share of each frame's wall-clock time the solver may spend, leaving the rest for
- *  rendering and input. A *share* rather than a fixed per-frame budget is what keeps
- *  the world's pace off the frame rate: a 32 fps Remote Desktop session has 31 ms
- *  frames and gets 15 ms of solving each, a 64 fps display has 16 ms frames and gets
- *  7.8 ms each — half a second of simulation per wall-clock second either way. The
- *  fixed 6 ms it replaces spent 6 ms *per frame*, so halving the frame rate halved
- *  the tick rate, and ×16 over RDP ran at a sixth of the speed it does locally. */
-const SIM_BUDGET_SHARE = 0.5
+/** How much of the DISPLAY's frame interval the solver may occupy, once the measured
+ *  cost of drawing has been taken out of it. Budgeting against the interval rather
+ *  than a fixed per-frame constant is what keeps the world's pace off the frame rate:
+ *  a 32 Hz Remote Desktop session and a 120 Hz panel hand the solver the same fraction
+ *  of a wall-clock second. The fixed 6 ms this replaced spent 6 ms *per frame*, so
+ *  halving the frame rate halved the tick rate.
+ *
+ *  Subtracting the render cost is what lets the solver claim the slack vsync leaves.
+ *  A flat half-share left the machine idle for part of every frame and capped ×4 at
+ *  222 TPS; three quarters reached 325 but spent the frame rate to do it, dropping 32
+ *  fps to 28. Measuring the draw hands over the real remainder and keeps the frames. */
+const SIM_BUDGET_SHARE = 0.92
+/** Held back so a frame that draws slower than the last one does not overrun vsync. */
+const SIM_SAFETY_MS = 1.5
 /** Floor, so even a pathological frame advances the world rather than stalling it. */
 const SIM_BUDGET_MIN_MS = 4
 /** Ceiling on a single frame's solver time. Deliberately high enough that it is a
  *  sanity bound rather than a governor: it must not bite in the working range, or it
  *  would put the frame rate back into the tick rate through the back door. At 24 ms
  *  it clamped everything below ~21 fps, so an 8 fps session ran the world at a third
- *  of the speed a 32 fps one did. The share already guarantees the browser half of
- *  every frame whatever its length, so this only bounds the worst single frame. */
+ *  of the speed a 32 fps one did. The budget already leaves the browser the draw it
+ *  measured plus a margin, so this only bounds the worst single frame. */
 const SIM_BUDGET_MAX_MS = 50
 /** How much unsimulated wall-clock time may be owed before the rest is written off.
  *  Never less than the frame just seen, or a slow display would discard time the
  *  solver was perfectly able to run. */
 const MAX_BACKLOG_MS = 100
 
-function simBudgetMs(dtMs: number): number {
-  return Math.min(SIM_BUDGET_MAX_MS, Math.max(SIM_BUDGET_MIN_MS, dtMs * SIM_BUDGET_SHARE))
+/** Smoothed cost of drawing one frame. Seeded pessimistically so the first frames do
+ *  not overcommit before anything has actually been measured. */
+let renderMs = 10
+
+function simBudgetMs(): number {
+  const spare = limiter.framePeriodMs * SIM_BUDGET_SHARE - renderMs - SIM_SAFETY_MS
+  return Math.min(SIM_BUDGET_MAX_MS, Math.max(SIM_BUDGET_MIN_MS, spare))
 }
 let fastJob: FastForward | null = null
 let activeTarget: number | null = null
@@ -120,7 +131,7 @@ let activeWorld = world.value
 function advance(dtMs: number) {
   const w = world.value
   if (!w) return
-  const budgetMs = simBudgetMs(dtMs)
+  const budgetMs = simBudgetMs()
 
   // a requested jump takes priority over normal playback
   if (seekTarget.value !== null) {
@@ -228,7 +239,11 @@ function loop(now: number) {
       maxWind.value = toMetresPerSecond(w.air.maxSpeed)
       windStreams.value = scene.windStreamCount
     }
+    const drawStart = performance.now()
     scene.render(dtMs, !paused.value && seekTarget.value === null)
+    // Exponential mean: one expensive frame must not starve the next one's budget,
+    // and one cheap frame must not let the solver overcommit.
+    renderMs += (performance.now() - drawStart - renderMs) * 0.1
   }
 
   fpsAcc++

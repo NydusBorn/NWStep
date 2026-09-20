@@ -263,8 +263,17 @@ export const LAW_DEFS: LawDef[] = [
 
   // --------------------------------------------------------------------- Clouds
   {
+    key: 'cloudAutoconversion', group: 'Clouds', label: 'Autoconversion threshold  q_c',
+    value: 0.00012, min: 0, max: 0.002, step: 0.00001,
+    formula: 'Δcloud = −(q_c_cloud − q_c)⁺·(1 − e^(−k·dt))',
+    hint: 'Cloud water a cell must carry before its droplets are big enough to fall. Below it '
+      + 'a cloud just drifts; above it, rain scales with the excess, so a dense cloud empties '
+      + 'itself fast. Set it to zero and every cloud decays at the same rate whatever its '
+      + 'size, which leaves the sky permanently and uniformly overcast.'
+  },
+  {
     key: 'cloudFallout', group: 'Clouds', label: 'Condensate fallout',
-    value: 0.001, min: 0, max: 0.05, step: 0.0001,
+    value: 0.03, min: 0, max: 0.05, step: 0.0001,
     formula: 'dcloud/dt = −k·cloud,  dfrost/dt = k·cloud',
     hint: 'Condensed material settles back to the ground. Prevents cold regions '
       + 'from accumulating an unlimited permanent cloud cap.'
@@ -310,7 +319,7 @@ export const LAW_DEFS: LawDef[] = [
   },
   {
     key: 'cloudDecay', group: 'Clouds', label: 'Cloud evaporation',
-    value: 0.006, min: 0, max: 1, step: 0.005,
+    value: 0.08, min: 0, max: 1, step: 0.005,
     formula: 'Δcloud = −k·cloud  when sub-saturated',
     hint: 'How fast cloud returns to vapour once the lifting stops. Low values leave long '
       + 'downwind plumes trailing off the ranges.'
@@ -329,6 +338,25 @@ export const LAW_DEFS: LawDef[] = [
     formula: 'lifting only where u* > u*t',
     hint: 'Below this friction velocity nothing moves at all. Lower it and the whole planet '
       + 'hazes over; raise it and only the jets can raise dust.'
+  },
+  {
+    key: 'dustGustiness', group: 'Clouds', label: 'Gustiness  I',
+    value: 0.4, min: 0, max: 2, step: 0.01,
+    formula: 'Q = C·softplus(u*³ − u*t³, 3I·u*³)',
+    hint: 'The saltation threshold applies to the instantaneous friction velocity, and a '
+      + '200 km cell does not have one — turbulence spreads it about the cell mean, so a cell '
+      + 'sitting below threshold still lifts from the gusty tail. At zero the cutoff is hard '
+      + 'and calm ground becomes a dust trap it can never escape: storms bury their dust in '
+      + 'the quiet cells and the sky clears permanently.'
+  },
+  {
+    key: 'tracerLofting', group: 'Clouds', label: 'Vertical tracer exchange',
+    value: 1, min: 0, max: 4, step: 0.01,
+    formula: 'Δaloft = load·(1 − e^(−exchange·L·dt))',
+    hint: 'How strongly rising air carries dust, cloud and vapour into the upper layer, and '
+      + 'sinking air brings them back. At zero the surface layer is sealed and convergence '
+      + 'zones fill for ever — the equator ends up holding everything and the rest of the '
+      + 'planet is swept clean. Raise it and storms vent upward and spread downwind.'
   },
   {
     key: 'dustSettling', group: 'Clouds', label: 'Dust settling',

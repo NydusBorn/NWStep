@@ -72,6 +72,20 @@ export class FrameLimiter {
     return this.refreshMs > 0 ? 1000 / this.refreshMs : 0
   }
 
+  /**
+   * Nominal wall-clock milliseconds between accepted frames: the display period, or
+   * the ceiling's interval where the ceiling is the binding constraint.
+   *
+   * This does NOT depend on how long the app takes to produce a frame, which is what
+   * makes it safe to budget work against. Budgeting against the *measured* frame
+   * interval instead is a feedback loop: spending the slack lengthens the frame,
+   * which appears to grant more slack.
+   */
+  get framePeriodMs(): number {
+    const refresh = this.refreshMs > 0 ? this.refreshMs : FIRST_FRAME_MS
+    return Math.max(refresh, this.intervalMs())
+  }
+
   /** Frame rate the current ceiling allows on the measured display; 0 = uncapped. */
   get targetFps(): number {
     return cappedRate(this.displayHz, this.maxFps)

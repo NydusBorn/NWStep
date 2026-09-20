@@ -19,6 +19,14 @@ const RAMP = [
   [0.55, 0.58, 0.95, 0.86], [0.78, 1, 0.76, 0.32], [1, 1, 0.93, 0.88]
 ]
 
+/** Display smoothing time constant for the traced field, in simulation ticks. Small
+ *  enough that the picture is never more than a fraction of a day behind the solver,
+ *  which is what keeps the pause transition imperceptible. */
+const FIELD_TAU_TICKS = 6
+/** While paused the weather is fixed, so the display converges on it over this many
+ *  frames. Wall-clock, because no simulated time is passing to measure it in. */
+const PAUSE_SETTLE_FRAMES = 10
+
 export class WindLayer {
   private geo = new LineSegmentsGeometry()
   private mat = new LineMaterial({ linewidth: 1.4, vertexColors: true, transparent: true,
@@ -49,7 +57,6 @@ export class WindLayer {
   private phases = new Float64Array(ANCHORS)
   private ready = false
   private lastTick = -1
-  private wasEvolving = false
   private maxSpeed = 1e-9
   private count = 0
   private detail = 0
@@ -291,15 +298,26 @@ export class WindLayer {
     const horizon = Math.cos(Math.min(Math.PI, visibleAngle)) * cameraRadius
     const { grid: g } = this.world.sphere
     const { air } = this.world
-    // Freeze the actual current weather, not a partially eased display field.
-    // The last running frame has already recorded this tick, so tick changes
-    // alone miss the pause transition. A near-calm cached field can otherwise
-    // leave every traced segment below the stagnation cutoff at a new zoom.
-    const arrival = !evolve && (this.wasEvolving || this.lastTick !== this.world.tick)
-    const alpha = !this.ready || arrival ? 1 : evolve ? -Math.expm1(-dtFrames / 120) : 0
+    // The displayed field trails the solver's, so streamlines do not shimmer on
+    // per-tick noise. How far it trails is measured in TICKS, not frames: the field
+    // it chases advances per tick, so a frame-based constant made the lag depend on
+    // both frame rate and playback speed. At x16 the display trailed the weather by
+    // days, and the pause transition below then had to cross all of it at once --
+    // which is what visibly re-threw every streamline the moment you stopped.
+    const ticks = this.world.tick - this.lastTick
+    // A jump (first frame, rewind, seek) has no history worth easing from.
+    const jumped = !this.ready || ticks < 0
+    const alpha = jumped
+      ? 1
+      : evolve
+        ? -Math.expm1(-ticks / FIELD_TAU_TICKS)
+        // Paused: converge on the frozen weather instead of snapping to it. Settling
+        // over a few frames keeps the field identical to the solver's once stopped --
+        // so a later zoom still has real wind to trace, which a stale near-calm cache
+        // did not -- without the discontinuity a straight snap produced.
+        : -Math.expm1(-dtFrames / PAUSE_SETTLE_FRAMES)
     this.ready = true
     this.lastTick = this.world.tick
-    this.wasEvolving = evolve
     let max = 1e-9
     for (let i = 0; i < g.count; i++) {
       const u = air.windU[i]!, v = air.windV[i]!
