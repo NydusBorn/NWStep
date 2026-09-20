@@ -120,6 +120,12 @@ function advance(dtMs: number) {
     rewindLimit.value = null
     tickAcc += n
   } else {
+    if (w.tick === 0) {
+      rewindLimit.value = 0
+      paused.value = true
+      stepAcc = 0
+      return
+    }
     // One seek for the whole frame, not one per tick: it restores the nearest
     // snapshot and replays at most a stride's worth of ticks either way.
     const from = w.tick

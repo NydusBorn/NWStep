@@ -257,10 +257,22 @@ export function useSim() {
     if (w) resetHistory(w)
   }
 
+  function resume() {
+    seekTarget.value = null
+    unstable.value = null
+    if (world.value) {
+      world.value.paused = false
+      world.value.air.unstable = null
+    }
+    paused.value = false
+  }
+
   watch([showWind, showClouds, fullbright, sidebarOpen, panelsOpen, mode, exaggeration, figureExaggeration], persist)
 
   const clock = computed(() => clockOf(tick.value, laws))
   const historyReach = computed(() => {
+    // History is mutated in place; the displayed tick invalidates this readout.
+    void tick.value
     const w = world.value
     if (!w) return null
     const span = historySpan(w.history)
@@ -274,6 +286,6 @@ export function useSim() {
     selectedCell, reading, figure, unstable, regenerating, fps, tps, meanTemp, maxWind,
     terrainVersion, seekTarget, seekProgress, fastSeek, rewindLimit, notice, clock, historyReach,
     select, refreshReading, newSeed, resetLaws, relaunchMoons, exportJson, importJson,
-    goToTick, goToDay, clearHistoryNow, persist
+    goToTick, goToDay, clearHistoryNow, persist, resume
   }
 }

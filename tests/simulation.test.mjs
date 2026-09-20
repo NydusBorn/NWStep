@@ -288,3 +288,20 @@ test('wind LOD reduces actual geometry and stays above detailed terrain', () => 
   assert.ok(left.distanceTo(layer.flow) < 1e-6)
   layer.dispose()
 })
+
+test('pausing uses the current wind field through zoom changes after a calm frame', () => {
+  const w = createWorld()
+  const layer = new WindLayer(new THREE.Group(), w)
+  layer.setTerrain(5)
+  layer.update(1, false, 3)
+  // One short render after calm: temporal smoothing has not caught up yet.
+  w.air.windU.fill(0.00001)
+  w.tick++
+  layer.update(0.2, true, 3)
+  for (const distance of [5.5, 1.3, 3]) {
+    layer.update(1000, false, distance)
+    assert.ok(layer.geo.instanceCount > 0, `Paused wind must render at distance ${distance}`)
+  }
+  assert.equal(w.tick, 1, 'Camera changes must not advance the simulation')
+  layer.dispose()
+})

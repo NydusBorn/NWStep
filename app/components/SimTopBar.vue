@@ -4,7 +4,8 @@ import { useSim } from '../composables/useSim'
 
 const {
   paused, speed, clock, fastSeek, seekTarget, sidebarOpen,
-  unstable, rewindLimit, notice, exportJson, importJson, goToDay, goToTick
+  unstable, rewindLimit, notice, meanTemp, maxWind, historyReach,
+  exportJson, importJson, goToDay, goToTick, resume
 } = useSim()
 const fileInput = ref<HTMLInputElement | null>(null)
 const importKind = ref<'settings' | 'timestep'>('settings')
@@ -21,6 +22,7 @@ function download(kind: 'settings' | 'timestep') {
   a.download = `nwstep-${kind}-${Date.now()}.json`
   a.click()
   URL.revokeObjectURL(url)
+  flash.value = `${kind === 'settings' ? 'Settings' : 'Timestep'} exported.`
 }
 function chooseFile(kind: 'settings' | 'timestep') {
   importKind.value = kind
@@ -52,7 +54,10 @@ async function onFile(e: Event) {
 function jump() {
   if (jumpDay.value === '') return
   const day = Number(jumpDay.value)
-  if (Number.isFinite(day) && day >= 0) goToDay(day)
+  if (Number.isFinite(day) && day >= 0) {
+    goToDay(day)
+    jumpDay.value = ''
+  }
 }
 </script>
 
@@ -71,12 +76,14 @@ function jump() {
         color="neutral"
         variant="ghost"
         :aria-label="paused ? 'Resume' : 'Pause'"
-        @click="seekTarget = null; paused = !paused"
+        :title="paused ? 'Resume simulation' : 'Pause simulation'"
+        @click="paused ? resume() : (paused = true); seekTarget = null"
       />
       <UButton
         v-for="s in speeds"
         :key="s"
         :label="s < 0 ? `◀ ${-s}x` : `${s}x`"
+        :title="s < 0 ? 'Rewind through recorded history' : 'Forward playback'"
         :color="speed === s ? 'primary' : 'neutral'"
         :variant="speed === s ? 'soft' : 'ghost'"
         :aria-pressed="speed === s"
@@ -155,6 +162,13 @@ function jump() {
         size="sm"
         title="Approximate destination weather on long jumps. Disable for full weather replay."
       />
+      <div
+        class="ml-auto flex flex-wrap gap-3 font-mono text-xs tabular-nums text-muted"
+        data-testid="global-readouts"
+      >
+        <span title="Global mean temperature">T̄ {{ (meanTemp - 273.15).toFixed(0) }}°C</span>
+        <span title="Maximum wind speed">v<sub>max</sub> {{ maxWind.toFixed(0) }} m/s</span>
+      </div>
     </div>
   </header>
   <UAlert
@@ -162,15 +176,33 @@ function jump() {
     color="warning"
     title="Universe destabilised"
     :description="`The solver paused at ${unstable}. Adjust the law and resume.`"
-  />
+  >
+    <template #actions>
+      <UButton
+        color="warning"
+        variant="soft"
+        label="Dismiss and resume"
+        @click="resume()"
+      />
+    </template>
+  </UAlert>
   <UAlert
     v-else-if="rewindLimit !== null"
     color="info"
     title="End of recorded history"
-    description="Use Go to day to replay earlier dates from the beginning."
+    :description="`Recorded history reaches back to day ${historyReach ? historyReach.fromDay.toFixed(2) : '0'}. Use Go to day to replay earlier dates from the beginning.`"
     close
-    @update:open="rewindLimit = null; speed = 1"
-  />
+    @update:open="rewindLimit = null; speed = 1; resume()"
+  >
+    <template #actions>
+      <UButton
+        color="info"
+        variant="soft"
+        label="Resume forward"
+        @click="rewindLimit = null; speed = 1; resume()"
+      />
+    </template>
+  </UAlert>
   <UAlert
     v-else-if="notice || flash"
     color="neutral"

@@ -61,3 +61,8 @@ The shell evaluates six noise octaves per fragment and uses slab attenuation,
 replacing forty octave evaluations for the previous noise/shadow marches.
 
 Run `pnpm test`, `pnpm typecheck` and `pnpm lint` for regression checks.
+
+Paused-wind regression: `node scripts/verify-wind.mjs http://localhost:3123/`
+requires the development server. It checks wheel zoom without advancing time,
+the global readouts, recovery after a solver stop, and rewind recovery at day 0.
+Screenshots are written to `.shots/paused-wind-*.png`.

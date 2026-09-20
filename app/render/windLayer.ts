@@ -49,6 +49,7 @@ export class WindLayer {
   private phases = new Float64Array(ANCHORS)
   private ready = false
   private lastTick = -1
+  private wasEvolving = false
   private maxSpeed = 1e-9
   private count = 0
   private detail = 0
@@ -290,10 +291,15 @@ export class WindLayer {
     const horizon = Math.cos(Math.min(Math.PI, visibleAngle)) * cameraRadius
     const { grid: g } = this.world.sphere
     const { air } = this.world
-    const arrival = !evolve && this.lastTick !== this.world.tick
+    // Freeze the actual current weather, not a partially eased display field.
+    // The last running frame has already recorded this tick, so tick changes
+    // alone miss the pause transition. A near-calm cached field can otherwise
+    // leave every traced segment below the stagnation cutoff at a new zoom.
+    const arrival = !evolve && (this.wasEvolving || this.lastTick !== this.world.tick)
     const alpha = !this.ready || arrival ? 1 : evolve ? -Math.expm1(-dtFrames / 120) : 0
     this.ready = true
     this.lastTick = this.world.tick
+    this.wasEvolving = evolve
     let max = 1e-9
     for (let i = 0; i < g.count; i++) {
       const u = air.windU[i]!, v = air.windV[i]!
