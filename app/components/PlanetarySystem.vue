@@ -305,5 +305,5 @@ onMounted(() => {
 </script>
 
 <template>
-  <div ref="container" class="fixed inset-0 h-full w-full" />
+  <div ref="container" class="h-full w-full" />
 </template>
